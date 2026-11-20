@@ -17,7 +17,7 @@ yhl-ui 是自用的单节点代理管理程序。它使用官方 sing-box 1.14.4
 
 在目标 Linux 节点上准备 Docker Engine、Compose 插件、Python 3.10 或以上，并在 1Panel 安装和启动 OpenResty，使用应用商店默认的 host 网络。域名需要直接解析到本节点的公网 IPv4。请在 1Panel 建好该域名的 443 网站，绑定已签发的可信证书并开启自动续期。443 需要支持 TLS 1.3。节点防火墙和云安全组需允许 TCP 8080、9999 和 443。
 
-在服务器的交互式 CLI 粘贴一行打开管理菜单，再选择「安装或更新」。首次安装输入域名和后台路径，路径回车默认 `/admin`。以 root 登录时可将 `sudo bash` 改成 `bash`。
+在服务器的交互式 CLI 粘贴一行打开管理菜单，再选择「安装或更新」。首次安装输入域名和后台路径，路径回车默认 `/admin`，输入 `yhlui` 会使用 `/yhlui`。以 root 登录时可将 `sudo bash` 改成 `bash`。
 
 ```sh
 curl -fsSL https://github.com/y383688728/yhl-ui/releases/latest/download/setup.sh | sudo bash
@@ -39,7 +39,7 @@ curl -fsSL https://github.com/y383688728/yhl-ui/releases/latest/download/setup.s
 
 ## 维护
 
-卸载服务时选择菜单第 3 项并确认，或直接运行下面命令。CLI 移除 yhl-ui 容器和自己写入的 9999 配置，保留 SQLite 卷和 1Panel 的网站与证书。
+卸载服务时选择菜单第 3 项，或运行下面的命令，然后确认。完整卸载会永久删除 SQLite 卷中的管理员、设备和订阅数据，同时移除 yhl-ui 容器、安装镜像、已下载版本文件和自己写入的 9999 配置。1Panel 的 443 网站和证书继续由 1Panel 管理。重装时可以重新填写后台路径，并会生成新的登录密码和订阅。
 
 ```sh
 curl -fsSL https://github.com/y383688728/yhl-ui/releases/latest/download/setup.sh | sudo bash -s -- --uninstall

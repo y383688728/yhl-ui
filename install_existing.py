@@ -2,6 +2,7 @@ import argparse
 import fcntl
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -16,7 +17,8 @@ from openresty import ADMIN_PORT, OpenResty
 from panel import NoRedirect
 
 
-VERSION = "0.1.4"
+VERSION = "0.1.5"
+RELEASES = Path("/opt/yhl-ui/releases")
 
 
 @dataclass
@@ -123,17 +125,61 @@ def verify_frontend(domain, path):
     raise RuntimeError(f"{domain}:{ADMIN_PORT} 未连到本机 yhl-ui，请检查公网端口、防火墙和反代。")
 
 
+def remove_release_files():
+    if not RELEASES.is_dir():
+        return
+    if RELEASES.resolve() != RELEASES:
+        raise RuntimeError("安装目录使用了符号链接，请手工检查。")
+    for child in RELEASES.iterdir():
+        if (re.fullmatch(r"\d+\.\d+\.\d+", child.name) and child.is_dir()
+                and not child.is_symlink() and child.resolve().parent == RELEASES
+                and all((child / name).is_file() for name in ("setup.sh", "compose.yaml", "install_existing.py"))):
+            shutil.rmtree(child)
+    if not any(RELEASES.iterdir()):
+        RELEASES.rmdir()
+    if not any(RELEASES.parent.iterdir()):
+        RELEASES.parent.rmdir()
+
+
+def uninstall(domain):
+    if input("确认完整卸载 yhl-ui？管理员、设备和订阅数据将永久删除。[y/N] ").strip().lower() != "y":
+        print("已取消卸载。")
+        return
+    if domain:
+        installed = installed_service()
+        if installed and domain != installed.domain:
+            raise RuntimeError("指定域名与当前安装不符。")
+    volume = f"{COMPOSE[3]}_yhl-data"
+    names = command("docker", "volume", "ls", "--format", "{{.Name}}", capture=True).stdout.splitlines()
+    if volume in names:
+        owned = command(
+            "docker", "volume", "ls", "--filter", f"label=com.docker.compose.project={COMPOSE[3]}",
+            "--filter", "label=com.docker.compose.volume=yhl-data", "--format", "{{.Name}}", capture=True,
+        ).stdout.splitlines()
+        if volume not in owned:
+            raise RuntimeError(f"无法确认 {volume} 属于 yhl-ui，已中断卸载。")
+    OpenResty(domain, removing=True).remove_managed()
+    command(*COMPOSE, "down", "--remove-orphans")
+    if volume in names:
+        command("docker", "volume", "rm", volume)
+    images = command(
+        "docker", "image", "ls", "yhl-ui", "--format", "{{.Repository}}:{{.Tag}}", capture=True,
+    ).stdout.splitlines()
+    for image in images:
+        if re.fullmatch(r"yhl-ui:(?:\d+\.\d+\.\d+|rollback)", image):
+            command("docker", "image", "rm", image)
+    remove_release_files()
+    print("yhl-ui 已完整卸载，SQLite 数据已删除。1Panel 的 443 网站和证书已保留。")
+
+
 def install(args):
     command(*COMPOSE, "version")
+    if args.uninstall:
+        uninstall(args.domain)
+        return
     installed = installed_service()
     if installed and args.domain and args.domain != installed.domain:
         raise RuntimeError("指定域名与当前安装不符。")
-    if args.uninstall:
-        if installed:
-            OpenResty(installed.domain, removing=True).remove()
-            command(*COMPOSE, "down")
-        print("yhl-ui 已卸载。SQLite 数据和 1Panel 的 443 网站、证书已保留。")
-        return
     if args.update and not installed:
         raise RuntimeError("未检测到已安装的 yhl-ui，请先执行安装。")
     if installed and args.admin_path and args.admin_path != installed.path:
@@ -192,7 +238,7 @@ def main():
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--check", action="store_true", help="仅验证环境和证书")
     action.add_argument("--update", action="store_true", help="更新已有安装")
-    action.add_argument("--uninstall", action="store_true", help="卸载服务并保留数据")
+    action.add_argument("--uninstall", action="store_true", help="完整卸载并删除本机 yhl-ui 数据")
     parser.add_argument("--reset-password-only", action="store_true", help="重置管理员密码并关闭验证器")
     args = parser.parse_args()
     if args.reset_password_only and (args.check or args.uninstall):

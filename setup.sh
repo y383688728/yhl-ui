@@ -2,7 +2,7 @@
 set -euo pipefail
 umask 022
 
-version=0.1.4
+version=0.1.5
 release="https://github.com/y383688728/yhl-ui/releases/download/v$version"
 install_dir="/opt/yhl-ui/releases/$version"
 
@@ -17,19 +17,13 @@ fi
 
 if (( $# == 0 )); then
     printf '\nyhl-ui 管理菜单 · GitHub v%s\n' "$version"
-    printf '1) 安装或更新\n2) 更新并重置管理员密码，关闭验证器\n3) 卸载并保留数据\n0) 退出\n'
+    printf '1) 安装或更新\n2) 更新并重置管理员密码，关闭验证器\n3) 完整卸载\n0) 退出\n'
     while true; do
         read -r -p '请选择 [0–3]：' choice </dev/tty || exit 0
         case "$choice" in
             1) break ;;
             2) set -- --update --reset-password-only; break ;;
-            3)
-                read -r -p '确认卸载 yhl-ui？SQLite 数据和 1Panel 网站将保留。[y/N] ' answer </dev/tty || exit 0
-                case "$answer" in
-                    y|Y) set -- --uninstall; break ;;
-                    *) printf '已取消卸载。\n' ;;
-                esac
-                ;;
+            3) set -- --uninstall; break ;;
             0) exit 0 ;;
             *) printf '请输入 0、1、2 或 3。\n' ;;
         esac
@@ -53,7 +47,13 @@ case "$(uname -m)" in
     aarch64) archive="yhl-ui-$version-source.tar.gz"; image_archive="" ;;
     *) printf '当前架构不受支持。\n' >&2; exit 1 ;;
 esac
-if [[ "$installed_image" == "yhl-ui:$version" || " $* " == *" --uninstall "* ]]; then
+uninstall=false
+for argument in "$@"; do
+    if [[ "$argument" == "--uninstall" ]]; then
+        uninstall=true
+    fi
+done
+if [[ "$installed_image" == "yhl-ui:$version" || "$uninstall" == true ]]; then
     archive="yhl-ui-$version-source.tar.gz"
     image_archive=""
 fi
@@ -73,6 +73,9 @@ printf '%s  %s\n' "$digest" "$tmp/$archive" | sha256sum --check --status || {
     printf '发布包 SHA256 校验失败。\n' >&2
     exit 1
 }
+if [[ "$uninstall" == true ]]; then
+    install_dir="$tmp/source"
+fi
 mkdir -p -- "$install_dir"
 tar -xzf "$tmp/$archive" -C "$install_dir" --no-same-owner --no-same-permissions
 cd -- "$install_dir"

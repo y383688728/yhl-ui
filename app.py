@@ -421,6 +421,8 @@ def hostname(value):
 
 
 def admin_path(value):
+    if not value.startswith("/"):
+        value = "/" + value
     if value in ("/healthz", "/sub") or not re.fullmatch(r"/[A-Za-z0-9][A-Za-z0-9_-]{0,63}", value):
         raise argparse.ArgumentTypeError("后台路径须为单段路径，例如 /admin 或 /my-panel。")
     return value

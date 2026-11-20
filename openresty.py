@@ -6,6 +6,7 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
+from app import hostname
 from install import command, port_available, verify_handshake
 
 
@@ -77,6 +78,9 @@ class OpenResty:
             identifier for identifier, image in (line.split() for line in result.stdout.splitlines())
             if re.fullmatch(r"(?:[^ ]+/)?1panel/openresty(?::[^ ]+|@sha256:[a-f0-9]+)?", image)
         ]
+        if removing and not matches:
+            self.directory = None
+            return
         if len(matches) != 1:
             raise RuntimeError("请先在 1Panel 安装并启动唯一一个 OpenResty 实例。")
         self.container = matches[0]
@@ -93,15 +97,16 @@ class OpenResty:
         if len(locations) != 1 or not locations[0].is_dir():
             raise RuntimeError("找不到 1Panel OpenResty 的标准网站配置目录。")
         directory = locations[0].resolve()
-        name = "yhl-ui-admin-" + hashlib.sha256(domain.encode()).hexdigest()[:12] + ".conf"
-        self.path = directory / name
+        self.directory = directory
         self.domain = domain
+        if domain is not None:
+            self.path = directory / self.config_name(domain)
         if removing:
             return
         cert, key = site_certificate(directory, domain)
         self.config = render(domain, cert, key).encode("utf-8")
         if self.path.is_symlink() or (self.path.exists() and self.path.read_bytes() != self.config):
-            raise RuntimeError(f"{name} 已存在且配置不同，安装器无法接管。")
+            raise RuntimeError(f"{self.path.name} 已存在且配置不同，安装器无法接管。")
         self.run("-t", "-q")
 
     def run(self, *args):
@@ -119,6 +124,28 @@ class OpenResty:
             verify_handshake("127.0.0.1", self.domain, ADMIN_PORT)
             return True
         return False
+
+    @staticmethod
+    def config_name(domain):
+        return "yhl-ui-admin-" + hashlib.sha256(domain.encode()).hexdigest()[:12] + ".conf"
+
+    def remove_managed(self):
+        if self.directory is None:
+            return
+        if self.domain is not None:
+            self.remove()
+            return
+        for path in sorted(self.directory.glob("yhl-ui-admin-*.conf")):
+            if not re.fullmatch(r"yhl-ui-admin-[0-9a-f]{12}\.conf", path.name):
+                continue
+            if path.is_symlink() or not path.is_file():
+                raise RuntimeError(f"{path.name} 不是常规配置文件，请手工检查。")
+            names = [value.strip() for kind, value in DIRECTIVE.findall(path.read_text(encoding="utf-8"))
+                     if kind == "server_name"]
+            if len(names) != 1 or self.config_name(hostname(names[0])) != path.name:
+                raise RuntimeError(f"{path.name} 不符合 yhl-ui 生成的配置，请手工检查。")
+            self.domain, self.path = names[0], path
+            self.remove()
 
     def remove(self):
         if self.path.is_symlink():
