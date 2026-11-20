@@ -1,0 +1,51 @@
+:root {
+  color-scheme: light;
+  font: 16px/1.55 "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: #f0f3fa;
+  color: #1a2541;
+  --accent: #2446af;
+  --line: #dbe1ef;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { width: min(880px, calc(100% - 32px)); margin: 0 auto 4rem; }
+header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-height: 76px;
+  margin-bottom: 2rem;
+  border-bottom: 1px solid var(--line);
+  color: #505c79;
+}
+.brand { font-weight: 800; font-size: 1.35rem; letter-spacing: -.05em; color: var(--accent); }
+h1, h2, p { margin: 0; }
+h1 { font-size: clamp(1.6rem, 5vw, 2.4rem); letter-spacing: -.04em; }
+h2 { font-size: 1.2rem; margin-bottom: 1rem; }
+.panel, .login, .hero {
+  background: #fff;
+  padding: clamp(1rem, 4vw, 2rem);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  margin-bottom: 1rem;
+}
+.hero { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; }
+.hero p, .muted { color: #505c79; overflow-wrap: anywhere; }
+.status { border-radius: 30px; background: #e9eefc; color: #2446af; padding: .4rem .85rem; font-weight: 600; }
+.login { max-width: 440px; margin-inline: auto; }
+.login h1 { margin-bottom: 1.25rem; }
+.login form { display: grid; gap: 1.2rem; }
+label { display: grid; gap: .35rem; flex: 1; min-width: min(12rem, 100%); }
+input, button { font: inherit; border-radius: 8px; min-height: 42px; }
+input { width: 100%; border: 1px solid #bfc9e1; padding: .45rem .7rem; color: inherit; background: white; }
+input[readonly] { background: #f5f7fd; }
+button { cursor: pointer; border: 1px solid transparent; background: var(--accent); color: white; padding: .45rem 1rem; font-weight: 650; }
+.secondary { background: white; border-color: #bfc9e1; color: var(--accent); }
+:focus-visible { outline: 3px solid #7692f1; outline-offset: 2px; }
+.actions { display: flex; align-items: end; gap: .8rem; flex-wrap: wrap; margin-top: 1rem; }
+ul { padding: 0; margin: 0; list-style: none; }
+li { display: flex; gap: 1rem; align-items: end; border-bottom: 1px solid var(--line); padding: .8rem 0; }
+li > div { flex: 1; min-width: 0; }
+li strong { display: block; overflow-wrap: anywhere; margin-bottom: .35rem; }
+.notice { background: #fff1e3; color: #7a390f; padding: .6rem 1rem; margin-bottom: 1rem; border-radius: 8px; }
+.logout { display: flex; justify-content: flex-end; }
