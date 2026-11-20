@@ -2,7 +2,7 @@
 set -euo pipefail
 umask 022
 
-version=0.1.2
+version=0.1.3
 release="https://github.com/y383688728/yhl-ui/releases/download/v$version"
 install_dir="/opt/yhl-ui/releases/$version"
 
@@ -22,12 +22,19 @@ python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' || {
     exit 1
 }
 docker compose version >/dev/null
+installed_image=$(docker ps --filter label=com.docker.compose.project=yhl-ui \
+    --filter label=com.docker.compose.service=yhl-ui --filter health=healthy --format '{{.Image}}')
+printf 'GitHub 发布版本 v%s\n' "$version"
 
 case "$(uname -m)" in
     x86_64) archive="yhl-ui-$version-linux-amd64.tar.gz"; image_archive="yhl-ui-image.tar.gz" ;;
     aarch64) archive="yhl-ui-$version-source.tar.gz"; image_archive="" ;;
     *) printf '当前架构不受支持。\n' >&2; exit 1 ;;
 esac
+if [[ "$installed_image" == "yhl-ui:$version" || " $* " == *" --uninstall "* ]]; then
+    archive="yhl-ui-$version-source.tar.gz"
+    image_archive=""
+fi
 
 download() {
     curl --fail --silent --show-error --location --retry 2 --max-time 180 \
@@ -48,10 +55,6 @@ mkdir -p -- "$install_dir"
 tar -xzf "$tmp/$archive" -C "$install_dir" --no-same-owner --no-same-permissions
 cd -- "$install_dir"
 
-if (( $# == 0 )); then
-    read -r -p '已在 1Panel 配好 HTTPS 的域名: ' domain </dev/tty
-    set -- "$domain"
-fi
 if [[ -n "$image_archive" ]]; then
     set -- "$@" --image-archive "$install_dir/$image_archive"
 fi

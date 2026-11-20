@@ -9,8 +9,9 @@ import ssl
 import subprocess
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from app import hostname, origin_port
+from app import DEFAULT_ADMIN_PATH, admin_path, hostname, origin_port
 from panel import Panel, confirm_dns, get_http
 
 
@@ -25,6 +26,7 @@ def command(*args, capture=False, check=True, **kwargs):
 def port_available(host, port):
     try:
         with socket.socket() as connection:
+            connection.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             connection.bind((host, port))
     except OSError as error:
         raise RuntimeError(f"TCP {port} 已占用，安装已中断。") from error
@@ -91,22 +93,24 @@ def install(args):
     ]
     if args.handshake_host:
         options += ["--handshake-host", args.handshake_host]
-    deploy_service(args.image_archive, running, options, [
+    _, prefix, _ = deploy_service(args.image_archive, running, options, [
         f"https://{args.domain}:{admin_port}", str(proxy_port), args.server_name, handshake_host,
     ], public_port=19998)
     for domain, port, upstream in sites:
         panel.create_site(domain, port, upstream, args.website_group, cert_id)
-    verify_site(f"https://{args.domain}:{admin_port}/healthz", "ready\n")
+    verify_site(f"https://{args.domain}:{admin_port}{prefix}/healthz", "ready\n")
     verify_site(f"https://{public_domain}/", "<title>小游戏</title>")
     if deferred_handshake:
         verify_handshake(handshake_host, args.server_name)
-    print(f"yhl-ui 后台 https://{args.domain}:{admin_port}")
+    print(f"yhl-ui 后台 https://{args.domain}:{admin_port}{prefix}/")
     print(f"代理 {args.domain}:{proxy_port}")
     print(f"443 网站 https://{public_domain}/")
 
 
-def deploy_service(image_archive, running, init_options, expected, *, public_port=None, on_ready=None):
+def deploy_service(image_archive, running, init_options, expected, *, public_port=None, on_ready=None, requested_path=None):
     env = {**os.environ, "YHL_HTTP_PORT": "19999", "YHL_PUBLIC_PORT": str(public_port or "")}
+    env["YHL_DOMAIN"] = urlsplit(expected[0]).hostname
+    credentials = None
     if image_archive:
         command("docker", "load", "-i", str(image_archive.resolve()))
     else:
@@ -119,21 +123,28 @@ def deploy_service(image_archive, running, init_options, expected, *, public_por
             check=False, env=env, stdin=subprocess.DEVNULL,
         )
         if initialized.returncode == 1:
-            run = ["--interactive=false", "-T"] if "--generate-password" in init_options else []
-            command(*COMPOSE, "run", "--rm", "--no-deps", *run, "yhl-ui", "init", *init_options, env=env)
+            if "--generate-password" in init_options:
+                credentials = bootstrap(env, "init", *init_options)
+            else:
+                command(*COMPOSE, "run", "--rm", "--no-deps", "yhl-ui", "init", *init_options, env=env)
         elif initialized.returncode:
             raise RuntimeError("无法检查 yhl-ui 持久化数据。")
     query = (
         "import sys; from pathlib import Path; from storage import Store; s=Store(Path('/data')).load(); "
         "actual=(s['origin'],str(s['port']),s['server_name'],s['handshake_host']); "
+        "print(s.get('admin_path', '/admin')); "
         "sys.exit(0 if actual[:len(sys.argv)-1] == tuple(sys.argv[1:]) else 2)"
     )
     same = command(
         *COMPOSE, "run", "--rm", "--no-deps", "-T", "--entrypoint", "python",
-        "yhl-ui", "-c", query, *expected, check=False, env=env, stdin=subprocess.DEVNULL,
+        "yhl-ui", "-c", query, *expected, check=False, capture=True, env=env, stdin=subprocess.DEVNULL,
     )
     if same.returncode:
         raise RuntimeError("现有持久化配置与本次设置不符，请使用原设置重新运行安装器。")
+    prefix = admin_path(same.stdout.strip() or DEFAULT_ADMIN_PATH)
+    if requested_path is not None and prefix != requested_path:
+        raise RuntimeError(f"已有的数据使用后台路径 {prefix}，升级会沿用该路径。")
+    env["YHL_ADMIN_PATH"] = prefix
     previous = command(
         "docker", "inspect", "--format", "{{.Image}}", running, capture=True,
     ).stdout.strip() if running else None
@@ -153,7 +164,7 @@ def deploy_service(image_archive, running, init_options, expected, *, public_por
         if public_port is not None:
             verify_site(f"http://127.0.0.1:{public_port}/", "<title>小游戏</title>")
         if on_ready is not None:
-            on_ready()
+            on_ready(prefix)
     except (KeyboardInterrupt, OSError, RuntimeError, subprocess.SubprocessError):
         if previous:
             command("docker", "tag", previous, "yhl-ui:rollback")
@@ -165,6 +176,25 @@ def deploy_service(image_archive, running, init_options, expected, *, public_por
         else:
             command(*COMPOSE, "stop", "yhl-ui", env=env)
         raise
+    return env, prefix, credentials
+
+
+def bootstrap(env, *args):
+    result = command(
+        *COMPOSE, "run", "--rm", "--no-deps", "-T", "yhl-ui", *args,
+        env=env, capture=True, stdin=subprocess.DEVNULL,
+    )
+    return credentials_from(result.stdout)
+
+
+def credentials_from(output):
+    try:
+        credentials = json.loads(output)
+        if credentials.get("account") == "admin" and credentials.get("password"):
+            return credentials
+    except (ValueError, AttributeError):
+        pass
+    raise RuntimeError("未能读取新生成的管理员密码。")
 
 
 def main():

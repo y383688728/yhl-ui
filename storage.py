@@ -62,7 +62,7 @@ class Store:
             row = db.execute("SELECT last_step FROM login_state WHERE id = 1").fetchone()
         return row[0] if row else self.legacy_step()
 
-    def save(self, state):
+    def save(self, state, *, last_step=None):
         settings = {key: value for key, value in state.items() if key != "devices"}
         try:
             with closing(self.connect()) as db:
@@ -70,6 +70,8 @@ class Store:
                 with db:
                     db.execute("INSERT OR REPLACE INTO node VALUES (1, ?)", (json.dumps(settings),))
                     db.execute("INSERT OR IGNORE INTO login_state VALUES (1, ?)", (self.legacy_step(),))
+                    if last_step is not None:
+                        db.execute("UPDATE login_state SET last_step = ? WHERE id = 1", (last_step,))
                     db.execute("DELETE FROM device")
                     db.executemany("INSERT INTO device VALUES (?, ?, ?, ?)", [
                         (index, entry["id"], entry["name"], entry["token"])

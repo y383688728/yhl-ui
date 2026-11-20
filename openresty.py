@@ -67,9 +67,10 @@ server {{
 
 
 class OpenResty:
-    def __init__(self, domain):
+    def __init__(self, domain, *, removing=False):
+        listing = ["--all"] if removing else []
         result = command(
-            "docker", "ps", "--filter", "label=com.docker.compose.service=openresty",
+            "docker", "ps", *listing, "--filter", "label=com.docker.compose.service=openresty",
             "--format", "{{.ID}} {{.Image}}", capture=True,
         )
         matches = [
@@ -92,13 +93,15 @@ class OpenResty:
         if len(locations) != 1 or not locations[0].is_dir():
             raise RuntimeError("找不到 1Panel OpenResty 的标准网站配置目录。")
         directory = locations[0].resolve()
-        cert, key = site_certificate(directory, domain)
         name = "yhl-ui-admin-" + hashlib.sha256(domain.encode()).hexdigest()[:12] + ".conf"
         self.path = directory / name
+        self.domain = domain
+        if removing:
+            return
+        cert, key = site_certificate(directory, domain)
         self.config = render(domain, cert, key).encode("utf-8")
         if self.path.is_symlink() or (self.path.exists() and self.path.read_bytes() != self.config):
             raise RuntimeError(f"{name} 已存在且配置不同，安装器无法接管。")
-        self.domain = domain
         self.run("-t", "-q")
 
     def run(self, *args):
@@ -116,6 +119,34 @@ class OpenResty:
             verify_handshake("127.0.0.1", self.domain, ADMIN_PORT)
             return True
         return False
+
+    def remove(self):
+        if self.path.is_symlink():
+            raise RuntimeError("9999 配置是符号链接，请手工检查。")
+        if not self.path.exists():
+            return
+        source = self.path.read_text(encoding="utf-8")
+        certs = [value.strip() for kind, value in DIRECTIVE.findall(source) if kind == "ssl_certificate"]
+        if len(certs) != 1 or not CERT.fullmatch(certs[0]):
+            raise RuntimeError("9999 配置与安装器生成的内容不同，请手工检查。")
+        cert = certs[0]
+        key = cert.removesuffix("fullchain.pem") + "privkey.pem"
+        if source != render(self.domain, cert, key):
+            raise RuntimeError("9999 配置与安装器生成的内容不同，请手工检查。")
+        running = command("docker", "inspect", "--format", "{{.State.Running}}", self.container, capture=True)
+        fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".yhl-ui-removal-")
+        os.close(fd)
+        backup = Path(name)
+        os.replace(self.path, backup)
+        try:
+            if running.stdout.strip() == "true":
+                self.run("-t", "-q")
+                self.run("-s", "reload")
+        except BaseException:
+            os.link(backup, self.path)
+            backup.unlink()
+            raise
+        backup.unlink()
 
     @contextmanager
     def activate(self):

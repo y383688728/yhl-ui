@@ -1,6 +1,6 @@
 # yhl-ui
 
-yhl-ui 是自用的单节点代理管理程序。它使用官方 sing-box 1.14.4，支持 VLESS、TCP、REALITY 和 Vision，并为每台设备生成独立的 Mihomo 订阅。管理后台采用密码和 TOTP 双因素登录。
+yhl-ui 是自用的单节点代理管理程序。它使用官方 sing-box 1.14.4，支持 VLESS、TCP、REALITY 和 Vision，并为每台设备生成独立的 Mihomo 订阅。新装时使用账号和密码登录，可在后台按需启用 TOTP 验证器。
 
 ## 端口
 
@@ -17,21 +17,33 @@ yhl-ui 是自用的单节点代理管理程序。它使用官方 sing-box 1.14.4
 
 在目标 Linux 节点上准备 Docker Engine、Compose 插件、Python 3.10 或以上，并在 1Panel 安装和启动 OpenResty，使用应用商店默认的 host 网络。域名需要直接解析到本节点的公网 IPv4。请在 1Panel 建好该域名的 443 网站，绑定已签发的可信证书并开启自动续期。443 需要支持 TLS 1.3。节点防火墙和云安全组需允许 TCP 8080、9999 和 443。
 
-在服务器的交互式 CLI 粘贴一行，然后输入域名。使用 root 登录时可将 `sudo bash` 改成 `bash`。
+在服务器的交互式 CLI 粘贴一行。首次安装输入域名和后台路径，路径回车默认 `/admin`。以 root 登录时可将 `sudo bash` 改成 `bash`。
 
 ```sh
-curl -fsSL https://github.com/y383688728/yhl-ui/releases/download/v0.1.2/setup.sh | sudo bash
+curl -fsSL https://github.com/y383688728/yhl-ui/releases/latest/download/setup.sh | sudo bash
 ```
 
-引导程序验证发布包的 SHA256，并将安装文件放在 `/opt/yhl-ui/releases/0.1.2`。x86-64 使用预构建镜像，ARM64 使用同一版本源码在节点本地构建。
+同一条命令也用于更新。引导程序从 GitHub 获取最新稳定版，检测到已安装时沿用域名和路径。版本已最新且运行健康时跳过重装。发布包经过 SHA256 校验，文件放在 `/opt/yhl-ui/releases/<版本>`。x86-64 使用预构建镜像，ARM64 使用同一版本源码在节点本地构建。
 
-安装器从 1Panel OpenResty 的网站配置识别证书路径，为 9999 创建独立的反向代理配置，引用 443 站点使用的同一套证书文件。1Panel 续期更新网站证书并重载 OpenResty 后，9999 随之使用新证书。默认安装无需 1Panel API Key、DNS 服务商凭据或 Redis。管理员密码和 TOTP 设置密钥在首次安装时自动生成并显示，请录入验证器并妥善保存。
+安装器从 1Panel OpenResty 的网站配置识别证书路径，为 9999 创建独立的反向代理配置，引用 443 站点使用的同一套证书文件。1Panel 续期更新网站证书并重载 OpenResty 后，9999 随之使用新证书。默认安装无需 1Panel API Key、DNS 服务商凭据或 Redis。安装通过健康检查后，CLI 显示后台完整地址、账号 `admin` 和随机管理员密码，请妥善保存。在「登录安全」中可以配置验证器。
+
+后台地址包含配置的路径，例如 `https://node.example.com:9999/admin/`。升级后旧订阅链接仍可使用。已有验证器状态会随升级保留。需要切换到密码登录并生成新密码时运行下面命令。
+
+```sh
+curl -fsSL https://github.com/y383688728/yhl-ui/releases/latest/download/setup.sh | sudo bash -s -- --update --reset-password-only
+```
 
 可运行 `python3 install_existing.py node.example.com --check` 只检查服务器条件。AMD64 离线安装可以用 `--image-archive /path/to/yhl-ui-image.tar.gz` 指定发布包里的镜像。源码中仍保留 `python3 install.py --help` 的 1Panel API 安装入口。
 
 安装成功后，用默认设备的订阅验证代理。安装器会检查 9999 是否转发到本次启动的实例。已有可用反代时会直接复用。新建配置后验证失败时，安装器会撤回本次新增的配置。
 
 ## 维护
+
+卸载服务时运行下面命令。CLI 移除 yhl-ui 容器和自己写入的 9999 配置，保留 SQLite 卷和 1Panel 的网站与证书。
+
+```sh
+curl -fsSL https://github.com/y383688728/yhl-ui/releases/latest/download/setup.sh | sudo bash -s -- --uninstall
+```
 
 在项目目录用 `docker compose -p yhl-ui ps` 查看运行状态。账户、设备和订阅存储在 Docker 卷 `yhl-ui_yhl-data` 内的 `yhl-ui.sqlite3`。升级会自动导入旧版本的 JSON 数据。升级前请停止服务或使用支持一致性快照的卷备份方案保存该卷，并保留当前镜像 ID。备份包含敏感数据，限制读取权限。
 
