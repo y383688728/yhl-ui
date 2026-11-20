@@ -2,7 +2,7 @@
 set -euo pipefail
 umask 022
 
-version=0.1.3
+version=0.1.4
 release="https://github.com/y383688728/yhl-ui/releases/download/v$version"
 install_dir="/opt/yhl-ui/releases/$version"
 
@@ -11,9 +11,31 @@ if (( EUID != 0 )); then
     exit 1
 fi
 if ! { true </dev/tty; } 2>/dev/null; then
-    printf '请在有交互终端的服务器会话中运行安装。\n' >&2
+    printf '请在有交互终端的服务器会话中运行。\n' >&2
     exit 1
 fi
+
+if (( $# == 0 )); then
+    printf '\nyhl-ui 管理菜单 · GitHub v%s\n' "$version"
+    printf '1) 安装或更新\n2) 更新并重置管理员密码，关闭验证器\n3) 卸载并保留数据\n0) 退出\n'
+    while true; do
+        read -r -p '请选择 [0–3]：' choice </dev/tty || exit 0
+        case "$choice" in
+            1) break ;;
+            2) set -- --update --reset-password-only; break ;;
+            3)
+                read -r -p '确认卸载 yhl-ui？SQLite 数据和 1Panel 网站将保留。[y/N] ' answer </dev/tty || exit 0
+                case "$answer" in
+                    y|Y) set -- --uninstall; break ;;
+                    *) printf '已取消卸载。\n' ;;
+                esac
+                ;;
+            0) exit 0 ;;
+            *) printf '请输入 0、1、2 或 3。\n' ;;
+        esac
+    done
+fi
+
 for dependency in curl sha256sum tar python3 docker; do
     command -v "$dependency" >/dev/null || { printf '缺少命令 %s。\n' "$dependency" >&2; exit 1; }
 done

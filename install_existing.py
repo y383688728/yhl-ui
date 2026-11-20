@@ -16,7 +16,7 @@ from openresty import ADMIN_PORT, OpenResty
 from panel import NoRedirect
 
 
-VERSION = "0.1.3"
+VERSION = "0.1.4"
 
 
 @dataclass

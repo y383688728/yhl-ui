@@ -17,7 +17,7 @@ yhl-ui 是自用的单节点代理管理程序。它使用官方 sing-box 1.14.4
 
 在目标 Linux 节点上准备 Docker Engine、Compose 插件、Python 3.10 或以上，并在 1Panel 安装和启动 OpenResty，使用应用商店默认的 host 网络。域名需要直接解析到本节点的公网 IPv4。请在 1Panel 建好该域名的 443 网站，绑定已签发的可信证书并开启自动续期。443 需要支持 TLS 1.3。节点防火墙和云安全组需允许 TCP 8080、9999 和 443。
 
-在服务器的交互式 CLI 粘贴一行。首次安装输入域名和后台路径，路径回车默认 `/admin`。以 root 登录时可将 `sudo bash` 改成 `bash`。
+在服务器的交互式 CLI 粘贴一行打开管理菜单，再选择「安装或更新」。首次安装输入域名和后台路径，路径回车默认 `/admin`。以 root 登录时可将 `sudo bash` 改成 `bash`。
 
 ```sh
 curl -fsSL https://github.com/y383688728/yhl-ui/releases/latest/download/setup.sh | sudo bash
@@ -27,7 +27,7 @@ curl -fsSL https://github.com/y383688728/yhl-ui/releases/latest/download/setup.s
 
 安装器从 1Panel OpenResty 的网站配置识别证书路径，为 9999 创建独立的反向代理配置，引用 443 站点使用的同一套证书文件。1Panel 续期更新网站证书并重载 OpenResty 后，9999 随之使用新证书。默认安装无需 1Panel API Key、DNS 服务商凭据或 Redis。安装通过健康检查后，CLI 显示后台完整地址、账号 `admin` 和随机管理员密码，请妥善保存。在「登录安全」中可以配置验证器。
 
-后台地址包含配置的路径，例如 `https://node.example.com:9999/admin/`。升级后旧订阅链接仍可使用。已有验证器状态会随升级保留。需要切换到密码登录并生成新密码时运行下面命令。
+后台地址包含配置的路径，例如 `https://node.example.com:9999/admin/`。升级后旧订阅链接仍可使用。已有验证器状态会随升级保留。需要切换到密码登录并生成新密码时，可以选择菜单第 2 项，或直接运行下面命令。
 
 ```sh
 curl -fsSL https://github.com/y383688728/yhl-ui/releases/latest/download/setup.sh | sudo bash -s -- --update --reset-password-only
@@ -39,7 +39,7 @@ curl -fsSL https://github.com/y383688728/yhl-ui/releases/latest/download/setup.s
 
 ## 维护
 
-卸载服务时运行下面命令。CLI 移除 yhl-ui 容器和自己写入的 9999 配置，保留 SQLite 卷和 1Panel 的网站与证书。
+卸载服务时选择菜单第 3 项并确认，或直接运行下面命令。CLI 移除 yhl-ui 容器和自己写入的 9999 配置，保留 SQLite 卷和 1Panel 的网站与证书。
 
 ```sh
 curl -fsSL https://github.com/y383688728/yhl-ui/releases/latest/download/setup.sh | sudo bash -s -- --uninstall
