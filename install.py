@@ -2,6 +2,7 @@ import argparse
 import fcntl
 import getpass
 import ipaddress
+import json
 import os
 import socket
 import ssl
@@ -29,15 +30,15 @@ def port_available(host, port):
         raise RuntimeError(f"TCP {port} 已占用，安装已中断。") from error
 
 
-def verify_handshake(host, server_name):
+def verify_handshake(host, server_name, port=443):
     context = ssl.create_default_context()
     context.minimum_version = ssl.TLSVersion.TLSv1_3
     try:
-        with socket.create_connection((host, 443), timeout=8) as connection:
-            with context.wrap_socket(connection, server_hostname=server_name):
-                pass
+        with socket.create_connection((host, port), timeout=8) as connection:
+            with context.wrap_socket(connection, server_hostname=server_name) as tls:
+                return tls.getpeercert(binary_form=True)
     except OSError as error:
-        raise RuntimeError("代理握手目标无法通过 TLS 1.3 证书验证。") from error
+        raise RuntimeError(f"{server_name}:{port} 无法通过 {host} 的 TLS 1.3 证书验证。") from error
 
 
 def verify_site(url, marker):
@@ -84,58 +85,15 @@ def install(args):
     if args.check:
         return
     cert_id = panel.certificate(args.domain, public_domain, acme_id, args.acme_email)
-    if args.image_archive:
-        command("docker", "load", "-i", str(args.image_archive.resolve()))
-    else:
-        command(*COMPOSE, "build")
     options = [
         "--domain", args.domain, "--admin-port", str(admin_port), "--port", str(proxy_port),
         "--server-name", args.server_name, "--first-device", "默认设备",
     ]
     if args.handshake_host:
         options += ["--handshake-host", args.handshake_host]
-    state_file = "/data/state.json"
-    if not running:
-        initialized = command(
-            *COMPOSE, "run", "--rm", "--no-deps", "-T", "--entrypoint", "test",
-            "yhl-ui", "-f", state_file, check=False,
-        )
-        if initialized.returncode == 1:
-            command(*COMPOSE, "run", "--rm", "--no-deps", "yhl-ui", "init", *options)
-        elif initialized.returncode:
-            raise RuntimeError("无法检查 yhl-ui 持久化数据。")
-    query = (
-        "import sys,json; s=json.load(open('/data/state.json')); "
-        "sys.exit(0 if (s['origin'],str(s['port']),s['server_name'],s['handshake_host']) "
-        "== tuple(sys.argv[1:]) else 2)"
-    )
-    supplied = [
-        f"https://{args.domain}:{admin_port}", str(proxy_port), args.server_name,
-        handshake_host,
-    ]
-    same = command(
-        *COMPOSE, "run", "--rm", "--no-deps", "-T", "--entrypoint", "python",
-        "yhl-ui", "-c", query, *supplied, check=False,
-    )
-    if same.returncode:
-        raise RuntimeError("现有持久化配置与本次设置不符，请使用原设置重新运行安装器。")
-    previous = command(
-        "docker", "inspect", "--format", "{{.Image}}", running, capture=True,
-    ).stdout.strip() if running else None
-    try:
-        command(*COMPOSE, "up", "-d", "--no-build", "--wait", "--wait-timeout", "45")
-        verify_site("http://127.0.0.1:19999/healthz", "ready\n")
-        verify_site("http://127.0.0.1:19998/", "<title>小游戏</title>")
-    except (RuntimeError, subprocess.CalledProcessError):
-        if previous:
-            command("docker", "tag", previous, "yhl-ui:rollback")
-            command(
-                *COMPOSE, "up", "-d", "--no-build", "--wait", "--wait-timeout", "45",
-                env={**os.environ, "YHL_IMAGE": "yhl-ui:rollback"},
-            )
-        else:
-            command(*COMPOSE, "stop", "yhl-ui")
-        raise
+    deploy_service(args.image_archive, running, options, [
+        f"https://{args.domain}:{admin_port}", str(proxy_port), args.server_name, handshake_host,
+    ], public_port=19998)
     for domain, port, upstream in sites:
         panel.create_site(domain, port, upstream, args.website_group, cert_id)
     verify_site(f"https://{args.domain}:{admin_port}/healthz", "ready\n")
@@ -145,6 +103,68 @@ def install(args):
     print(f"yhl-ui 后台 https://{args.domain}:{admin_port}")
     print(f"代理 {args.domain}:{proxy_port}")
     print(f"443 网站 https://{public_domain}/")
+
+
+def deploy_service(image_archive, running, init_options, expected, *, public_port=None, on_ready=None):
+    env = {**os.environ, "YHL_HTTP_PORT": "19999", "YHL_PUBLIC_PORT": str(public_port or "")}
+    if image_archive:
+        command("docker", "load", "-i", str(image_archive.resolve()))
+    else:
+        command(*COMPOSE, "build", env=env)
+    if not running:
+        initialized = command(
+            *COMPOSE, "run", "--rm", "--no-deps", "-T", "--entrypoint", "python",
+            "yhl-ui", "-c", "from pathlib import Path; from storage import Store; "
+            "raise SystemExit(not Store(Path('/data')).initialized)",
+            check=False, env=env, stdin=subprocess.DEVNULL,
+        )
+        if initialized.returncode == 1:
+            run = ["--interactive=false", "-T"] if "--generate-password" in init_options else []
+            command(*COMPOSE, "run", "--rm", "--no-deps", *run, "yhl-ui", "init", *init_options, env=env)
+        elif initialized.returncode:
+            raise RuntimeError("无法检查 yhl-ui 持久化数据。")
+    query = (
+        "import sys; from pathlib import Path; from storage import Store; s=Store(Path('/data')).load(); "
+        "actual=(s['origin'],str(s['port']),s['server_name'],s['handshake_host']); "
+        "sys.exit(0 if actual[:len(sys.argv)-1] == tuple(sys.argv[1:]) else 2)"
+    )
+    same = command(
+        *COMPOSE, "run", "--rm", "--no-deps", "-T", "--entrypoint", "python",
+        "yhl-ui", "-c", query, *expected, check=False, env=env, stdin=subprocess.DEVNULL,
+    )
+    if same.returncode:
+        raise RuntimeError("现有持久化配置与本次设置不符，请使用原设置重新运行安装器。")
+    previous = command(
+        "docker", "inspect", "--format", "{{.Image}}", running, capture=True,
+    ).stdout.strip() if running else None
+    old_port = ""
+    if running:
+        old_command = json.loads(command(
+            "docker", "inspect", "--format", "{{json .Config.Cmd}}", running, capture=True,
+        ).stdout)
+        if "--public-port" in old_command:
+            old_port = old_command[old_command.index("--public-port") + 1]
+        if public_port is None and old_port not in ("", "0"):
+            public_port = int(old_port)
+            env["YHL_PUBLIC_PORT"] = old_port
+    try:
+        command(*COMPOSE, "up", "-d", "--no-build", "--wait", "--wait-timeout", "45", env=env)
+        verify_site("http://127.0.0.1:19999/healthz", "ready\n")
+        if public_port is not None:
+            verify_site(f"http://127.0.0.1:{public_port}/", "<title>小游戏</title>")
+        if on_ready is not None:
+            on_ready()
+    except (KeyboardInterrupt, OSError, RuntimeError, subprocess.SubprocessError):
+        if previous:
+            command("docker", "tag", previous, "yhl-ui:rollback")
+            env["YHL_PUBLIC_PORT"] = old_port
+            command(
+                *COMPOSE, "up", "-d", "--no-build", "--wait", "--wait-timeout", "45",
+                env={**env, "YHL_IMAGE": "yhl-ui:rollback"},
+            )
+        else:
+            command(*COMPOSE, "stop", "yhl-ui", env=env)
+        raise
 
 
 def main():

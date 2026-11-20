@@ -9,7 +9,7 @@ WORKDIR /opt/yhl-ui
 RUN install -d -m 0700 -o 10001 -g 10001 /data
 COPY --from=download /tmp/sing-box /usr/local/bin/sing-box
 COPY --from=download /tmp/sing-box.LICENSE /usr/share/doc/sing-box/LICENSE
-COPY app.py core.py style.css ./
+COPY app.py core.py storage.py style.css ./
 COPY public/ ./public/
 USER 10001:10001
 ENTRYPOINT ["python", "app.py"]

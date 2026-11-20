@@ -4,7 +4,6 @@ import getpass
 import hashlib
 import hmac
 import ipaddress
-import json
 import os
 import re
 import secrets
@@ -19,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
-from core import DOMAIN, Core, device, subscription, write_json
+from core import DOMAIN, Core, device, subscription
 
 
 COOKIE = "__Host-yhl-session"
@@ -88,16 +87,14 @@ def dashboard(state, origin, running, csrf, message=""):
 
 
 class Admin:
-    def __init__(self, data, core, state):
-        self.data = data
+    def __init__(self, core, state):
         self.core = core
         self.state = state
         self.origin = state["origin"]
         self.lock = threading.Lock()
         self.sessions = {}
         self.failures = []
-        self.otp_path = self.data / "otp.json"
-        self.last_step = json.loads(self.otp_path.read_text()) if self.otp_path.exists() else 0
+        self.last_step = self.core.store.last_step()
 
     def login(self, password, otp):
         now = time.time()
@@ -109,7 +106,7 @@ class Admin:
         if hmac.compare_digest(password_hash(password, bytes.fromhex(auth["salt"])), auth["password_hash"]):
             for candidate in (step, step - 1, step + 1):
                 if candidate > self.last_step and hmac.compare_digest(totp(auth["totp"], candidate), otp):
-                    write_json(self.otp_path, candidate)
+                    self.core.store.save_step(candidate)
                     self.last_step = candidate
                     self.failures.clear()
                     token = secrets.token_urlsafe(32)
@@ -137,7 +134,7 @@ class Admin:
             if not 1 <= len(label) <= 60 or any(ord(char) < 32 for char in label):
                 raise ValueError("节点名称须为 1 至 60 个字符。")
             state["label"] = label
-            write_json(self.data / "state.json", state)
+            self.core.store.save(state)
             self.state = state
             return
         self.core.apply(state, self.state)
@@ -203,7 +200,10 @@ class Handler(BaseHTTPRequestHandler):
         with app.lock:
             if path == "/healthz":
                 ready = app.core.running or not app.state["devices"]
-                return self.respond(200 if ready else 503, "ready\n" if ready else "unavailable\n", "text/plain")
+                return self.respond(
+                    200 if ready else 503, "ready\n" if ready else "unavailable\n",
+                    "text/plain", {"X-YHL-Instance": self.server.instance},
+                )
             if path.startswith("/sub/"):
                 key = path.removeprefix("/sub/")
                 if re.fullmatch(r"[a-zA-Z0-9_-]{43}", key):
@@ -241,7 +241,10 @@ class Handler(BaseHTTPRequestHandler):
                 password, otp = form.get("password", ""), form.get("otp", "")
                 if not 1 <= len(password) <= 256 or not re.fullmatch(r"[0-9]{6}", otp):
                     return self.respond(400, login_page("请输入密码和六位验证器代码。"))
-                token, status = app.login(password, otp)
+                try:
+                    token, status = app.login(password, otp)
+                except (OSError, RuntimeError):
+                    return self.respond(503, login_page("暂时无法保存登录状态，请稍后重试。"))
                 if token:
                     return self.redirect("/", token)
                 message = "尝试次数过多，请稍后再试。" if status == 429 else "登录凭据无效。"
@@ -300,12 +303,12 @@ def hostname(value):
     return value
 
 
-def initialize(args, core, path):
-    if path.exists():
+def initialize(args, core):
+    if core.store.initialized:
         raise SystemExit("数据目录已初始化。")
     if len({args.port, args.admin_port, args.http_port}) != 3 or args.port in (80, 443) or args.admin_port in (80, 443):
         raise SystemExit("代理、后台和本地 HTTP 必须使用不同的端口，保留 80/443 给网站。")
-    password = getpass.getpass("管理员密码（至少 12 个字符，留空自动生成）: ")
+    password = "" if args.generate_password else getpass.getpass("管理员密码（至少 12 个字符，留空自动生成）: ")
     generated = not password
     password = password or secrets.token_urlsafe(24)
     if not 12 <= len(password) <= 256:
@@ -332,7 +335,7 @@ def initialize(args, core, path):
         "auth": {"salt": salt.hex(), "password_hash": password_hash(password, salt), "totp": secret},
     }
     enrollment = f'otpauth://totp/{quote("yhl-ui:" + args.domain, safe="")}?secret={secret}&issuer=yhl-ui'
-    write_json(path, state)
+    core.store.save(state)
     print(f"后台地址: {origin}")
     if generated:
         print(f"生成的管理员密码: {password}")
@@ -340,11 +343,12 @@ def initialize(args, core, path):
     print(enrollment)
 
 
-def serve(args, core, path):
-    state = json.loads(path.read_text(encoding="utf-8"))
-    app = Admin(path.parent, core, state)
+def serve(args, core):
+    state = core.store.load()
+    app = Admin(core, state)
     server = ThreadingHTTPServer((args.http_bind, args.http_port), Handler)
     server.app = app
+    server.instance = secrets.token_hex(16)
     stopped = threading.Event()
     placeholder = None
 
@@ -395,19 +399,19 @@ def main():
     init.add_argument("--admin-port", type=origin_port, default=9999)
     init.add_argument("--proxy-bind", default="0.0.0.0")
     init.add_argument("--first-device")
+    init.add_argument("--generate-password", action="store_true")
     run = commands.add_parser("serve")
     run.add_argument("--http-bind", default="127.0.0.1")
-    run.add_argument("--public-port", type=origin_port)
+    run.add_argument("--public-port", type=lambda value: None if value == "0" else origin_port(value))
     for command in (init, run):
         command.add_argument("--http-port", type=origin_port, default=19999)
     args = parser.parse_args()
     args.data.mkdir(mode=0o700, parents=True, exist_ok=True)
     core = Core(args.core, args.data)
-    path = args.data / "state.json"
     if args.command == "init":
-        initialize(args, core, path)
+        initialize(args, core)
     else:
-        serve(args, core, path)
+        serve(args, core)
 
 
 if __name__ == "__main__":

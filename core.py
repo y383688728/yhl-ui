@@ -9,6 +9,8 @@ import time
 import uuid
 from pathlib import Path
 
+from storage import Store
+
 
 FLOW = "xtls-rprx-vision"
 DOMAIN = re.compile(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}")
@@ -87,7 +89,7 @@ def subscription(state, entry):
 class Core:
     def __init__(self, binary, data):
         self.binary = binary
-        self.data = data
+        self.store = Store(data)
         self.path = data / "sing-box.json"
         self.pending = data / "sing-box.pending.json"
         self.process = None
@@ -150,7 +152,7 @@ class Core:
             try:
                 self.start(self.pending, state)
                 os.replace(self.pending, self.path)
-                write_json(self.data / "state.json", state)
+                self.store.save(state)
             except (OSError, RuntimeError):
                 self.stop()
                 if previous is not None:
