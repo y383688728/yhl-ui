@@ -2,7 +2,7 @@
 set -euo pipefail
 umask 022
 
-version=0.1.0
+version=0.1.1
 release="https://github.com/y383688728/yhl-ui/releases/download/v$version"
 install_dir="/opt/yhl-ui/releases/$version"
 
@@ -52,10 +52,16 @@ if (( $# == 0 )); then
     read -r -p '后台域名: ' domain </dev/tty
     read -r -p '节点公网 IPv4: ' public_ip </dev/tty
     read -r -p '443 占位页域名（回车复用后台域名）: ' public_domain </dev/tty
-    read -r -p 'REALITY TLS 握手域名: ' target </dev/tty
-    read -r -p '1Panel 本机地址 [http://127.0.0.1:8888]: ' panel_url </dev/tty
-    read -r -p '已有 1Panel ACME 账户编号（没有则回车）: ' acme_account </dev/tty
-    set -- --domain "$domain" --public-ip "$public_ip" --server-name "$target" \
+    read -r -p 'REALITY 握手域名（回车使用 443 占位页域名）: ' target </dev/tty
+    read -r -p '1Panel API 本机地址 [http://127.0.0.1:8888]（无需登录路径）: ' panel_url </dev/tty
+    while true; do
+        read -r -p 'ACME 账户数字编号（没有或不知道则回车填写邮箱）: ' acme_account </dev/tty
+        if [[ -z "$acme_account" || "$acme_account" =~ ^[1-9][0-9]*$ ]]; then
+            break
+        fi
+        printf '请输入数字编号，例如 1。Cloudflare 属于 DNS 账户，这里使用 ACME 账户。\n' >&2
+    done
+    set -- --domain "$domain" --public-ip "$public_ip" --server-name "${target:-${public_domain:-$domain}}" \
         --panel-url "${panel_url:-http://127.0.0.1:8888}"
     if [[ -n "$public_domain" ]]; then
         set -- "$@" --public-domain "$public_domain"

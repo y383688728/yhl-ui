@@ -61,7 +61,10 @@ def install(args):
         raise RuntimeError("后台与代理端口须不同，并且不能占用 80、443、19998、19999。代理端口须大于 1023。")
     confirm_dns(args.domain, args.public_ip)
     confirm_dns(public_domain, args.public_ip)
-    verify_handshake(args.handshake_host or args.server_name, args.server_name)
+    handshake_host = args.handshake_host or args.server_name
+    deferred_handshake = handshake_host == args.server_name == public_domain
+    if not deferred_handshake:
+        verify_handshake(handshake_host, args.server_name)
     command(*COMPOSE, "version")
     panel = Panel(args.panel_url, getpass.getpass("1Panel API Key: "))
     sites = [(args.domain, admin_port, "http://127.0.0.1:19999"),
@@ -75,7 +78,9 @@ def install(args):
         port_available("0.0.0.0", proxy_port)
         port_available("127.0.0.1", 19998)
         port_available("127.0.0.1", 19999)
-    print("DNS、握手目标、后台端口和 1Panel API 预检通过。", flush=True)
+    print("DNS、端口和 1Panel API 预检通过。", flush=True)
+    if deferred_handshake:
+        print("443 占位页作为 TLS 握手目标，将在 HTTPS 站点就绪后验证。", flush=True)
     if args.check:
         return
     cert_id = panel.certificate(args.domain, public_domain, acme_id, args.acme_email)
@@ -106,7 +111,7 @@ def install(args):
     )
     supplied = [
         f"https://{args.domain}:{admin_port}", str(proxy_port), args.server_name,
-        args.handshake_host or args.server_name,
+        handshake_host,
     ]
     same = command(
         *COMPOSE, "run", "--rm", "--no-deps", "-T", "--entrypoint", "python",
@@ -135,6 +140,8 @@ def install(args):
         panel.create_site(domain, port, upstream, args.website_group, cert_id)
     verify_site(f"https://{args.domain}:{admin_port}/healthz", "ready\n")
     verify_site(f"https://{public_domain}/", "<title>小游戏</title>")
+    if deferred_handshake:
+        verify_handshake(handshake_host, args.server_name)
     print(f"yhl-ui 后台 https://{args.domain}:{admin_port}")
     print(f"代理 {args.domain}:{proxy_port}")
     print(f"443 网站 https://{public_domain}/")

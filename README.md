@@ -21,10 +21,10 @@ yhl-ui 是自用的单节点代理管理程序。它使用官方 sing-box 1.14.4
 在服务器的交互式 CLI 粘贴一行，跟随提示完成安装。使用 root 登录时可将 `sudo bash` 改成 `bash`。
 
 ```sh
-curl -fsSL https://github.com/y383688728/yhl-ui/releases/download/v0.1.0/setup.sh | sudo bash
+curl -fsSL https://github.com/y383688728/yhl-ui/releases/download/v0.1.1/setup.sh | sudo bash
 ```
 
-引导程序验证发布包的 SHA256，并将安装文件放在 `/opt/yhl-ui/releases/0.1.0`。x86-64 使用预构建镜像，ARM64 使用同一版本源码在节点本地构建。
+引导程序验证发布包的 SHA256，并将安装文件放在 `/opt/yhl-ui/releases/0.1.1`。x86-64 使用预构建镜像，ARM64 使用同一版本源码在节点本地构建。
 
 如需直接指定参数，在源码或发布包目录运行下方命令。替换示例域名、地址和邮箱。REALITY 的目标须支持 TLS 1.3，安装器会按指定的 SNI 验证证书。
 
@@ -38,8 +38,9 @@ python3 install.py --domain node.example.com --public-ip 192.0.2.10 \
 
 - 增加 `--check` 可只检查 DNS、1Panel API、握手目标和端口。
 - 用 `--public-domain play.example.com` 可给 443 占位页使用独立域名。省略时复用后台域名。
-- 已有 ACME 账户时，可用 `--acme-account ID` 替代 `--acme-email`。
-- 使用预构建镜像时，增加 `--image-archive /path/to/yhl-ui-0.1.0-linux-amd64.tar.gz`。
+- 选择 443 占位页作为 REALITY 握手目标时，安装器会在该站点启用 HTTPS 后再验证 TLS 1.3。
+- 已有 ACME 账户时，可用 `--acme-account ID` 替代 `--acme-email`。这里的 ID 为数字，证书通过 HTTP-01 验证。
+- 使用预构建镜像时，从 AMD64 发布包中解出 `yhl-ui-image.tar.gz`，再用 `--image-archive /path/to/yhl-ui-image.tar.gz` 指定该镜像归档。
 - 安装器遇到已被其他站点占用的域名和端口会中断。同一设置重试时，会复用本项目已创建的网站和证书。
 
 ## 维护
