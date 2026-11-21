@@ -7,7 +7,7 @@
 3. 登录服务器终端，运行下面这条命令，选择 **1）安装或更新**。已用 root 登录时，可以把 `sudo bash` 改成 `bash`。
 
 ```sh
-curl -fsSL https://github.com/y383688728/yhl-ui/releases/latest/download/setup.sh | sudo bash
+curl -fsSL https://github.com/yhlapple15/yhl-ui/releases/latest/download/setup.sh | sudo bash
 ```
 
 首次安装输入域名和后台路径，路径回车默认 `/admin`。保存终端最后显示的后台地址、账号和密码。以后更新用同一条命令，沿用原有配置。安装无需填写 1Panel API Key。
