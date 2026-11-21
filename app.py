@@ -20,7 +20,7 @@ from io import BytesIO
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
-from core import DOMAIN, Core, device, subscription
+from core import DOMAIN, Core, device, subscription, vless_uri
 
 
 COOKIE = "__Host-yhl-session"
@@ -63,11 +63,11 @@ def subscription_url(state, device_entry):
     return f'{state["origin"]}{entry_path(state)}/sub/{device_entry["token"]}'
 
 
-def subscription_qr(url):
+def qr_png(value):
     import qrcode
     from qrcode.image.pure import PyPNGImage
 
-    image = qrcode.make(url, image_factory=PyPNGImage, box_size=9)
+    image = qrcode.make(value, image_factory=PyPNGImage, box_size=9)
     output = BytesIO()
     image.save(output)
     return output.getvalue()
@@ -140,7 +140,8 @@ def dashboard(state, running, csrf, message=""):
         rows.append(f"""<li><div><strong>{escape(entry["name"])}</strong>
         <input readonly aria-label="Mihomo 订阅链接" value="{url}"></div>
         <form class="device-actions" method="post" action="{prefix}/devices/remove">{token}
-        <a class="button secondary" href="{prefix}/qr/{entry['id']}" target="_blank" rel="noopener noreferrer">订阅二维码</a>
+        <a class="button secondary" href="{prefix}/qr/{entry['id']}" target="_blank" rel="noopener noreferrer">Mihomo 订阅码</a>
+        <a class="button secondary" href="{prefix}/qr/node/{entry['id']}" target="_blank" rel="noopener noreferrer">小火箭节点码</a>
         <input type="hidden" name="id" value="{entry['id']}"><button class="secondary">撤销</button>
         </form></li>""")
     devices = f'<ul>{"".join(rows)}</ul>' if rows else '<p class="muted">添加设备后，代理会开始监听。</p>'
@@ -362,10 +363,14 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/qr/"):
                 _, csrf = self.session(app)
                 key = path.removeprefix("/qr/")
+                node = key.startswith("node/")
+                if node:
+                    key = key.removeprefix("node/")
                 if csrf:
                     for entry in app.state["devices"]:
                         if entry["id"] == key:
-                            return self.respond(200, subscription_qr(subscription_url(app.state, entry)), "image/png")
+                            payload = vless_uri(app.state, entry) if node else subscription_url(app.state, entry)
+                            return self.respond(200, qr_png(payload), "image/png")
                 return self.respond(404)
             if path not in ("/", "/login", "/security"):
                 return self.respond(404)

@@ -8,6 +8,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import quote, urlencode
 
 from storage import Store
 
@@ -84,6 +85,21 @@ def subscription(state, entry):
         "proxy-groups": [{"name": "节点", "type": "select", "proxies": [name]}],
         "rules": ["MATCH,节点"],
     }, ensure_ascii=False)
+
+
+def vless_uri(state, entry):
+    query = urlencode({
+        "type": "tcp",
+        "encryption": "none",
+        "security": "reality",
+        "flow": FLOW,
+        "sni": state["server_name"],
+        "fp": "chrome",
+        "pbk": state["public_key"],
+        "sid": state["short_id"],
+    })
+    label = quote(f'{state["label"]} · {entry["name"]}', safe="")
+    return f'vless://{entry["id"]}@{state["domain"]}:{state["port"]}?{query}#{label}'
 
 
 class Core:
