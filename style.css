@@ -36,16 +36,22 @@ h2 { font-size: 1.2rem; margin-bottom: 1rem; }
 .login h1 { margin-bottom: 1.25rem; }
 .login form { display: grid; gap: 1.2rem; }
 label { display: grid; gap: .35rem; flex: 1; min-width: min(12rem, 100%); }
-input, button { font: inherit; border-radius: 8px; min-height: 42px; }
+input, button, .button { font: inherit; border-radius: 8px; min-height: 42px; }
 input { width: 100%; border: 1px solid #bfc9e1; padding: .45rem .7rem; color: inherit; background: white; }
 input[readonly] { background: #f5f7fd; }
-button { cursor: pointer; border: 1px solid transparent; background: var(--accent); color: white; padding: .45rem 1rem; font-weight: 650; }
+button, .button { cursor: pointer; border: 1px solid transparent; background: var(--accent); color: white; padding: .45rem 1rem; font-weight: 650; }
+.button { display: inline-flex; align-items: center; text-decoration: none; }
+.hero-actions, .device-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; }
 .secondary { background: white; border-color: #bfc9e1; color: var(--accent); }
 :focus-visible { outline: 3px solid #7692f1; outline-offset: 2px; }
 .actions { display: flex; align-items: end; gap: .8rem; flex-wrap: wrap; margin-top: 1rem; }
 ul { padding: 0; margin: 0; list-style: none; }
 li { display: flex; gap: 1rem; align-items: end; border-bottom: 1px solid var(--line); padding: .8rem 0; }
 li > div { flex: 1; min-width: 0; }
+@media (max-width: 620px) {
+  li { flex-wrap: wrap; }
+  li > div { flex-basis: 100%; }
+}
 li strong { display: block; overflow-wrap: anywhere; margin-bottom: .35rem; }
 .notice { background: #fff1e3; color: #7a390f; padding: .6rem 1rem; margin-bottom: 1rem; border-radius: 8px; }
 .logout { display: flex; justify-content: flex-end; }

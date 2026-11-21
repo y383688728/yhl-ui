@@ -7,6 +7,8 @@ FROM ${PYTHON_IMAGE}
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 YHL_DATA=/data
 WORKDIR /opt/yhl-ui
 RUN install -d -m 0700 -o 10001 -g 10001 /data
+COPY requirements.txt ./
+RUN python -m pip install --no-cache-dir --no-deps --require-hashes --only-binary=:all: -r requirements.txt
 COPY --from=download /tmp/sing-box /usr/local/bin/sing-box
 COPY --from=download /tmp/sing-box.LICENSE /usr/share/doc/sing-box/LICENSE
 COPY app.py core.py storage.py style.css ./

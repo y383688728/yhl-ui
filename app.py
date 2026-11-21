@@ -16,6 +16,7 @@ import time
 from html import escape
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
@@ -56,6 +57,20 @@ def new_auth(password):
 
 def entry_path(state):
     return state.get("admin_path", DEFAULT_ADMIN_PATH)
+
+
+def subscription_url(state, device_entry):
+    return f'{state["origin"]}{entry_path(state)}/sub/{device_entry["token"]}'
+
+
+def subscription_qr(url):
+    import qrcode
+    from qrcode.image.pure import PyPNGImage
+
+    image = qrcode.make(url, image_factory=PyPNGImage, box_size=9)
+    output = BytesIO()
+    image.save(output)
+    return output.getvalue()
 
 
 OTP_INPUT = (
@@ -103,21 +118,29 @@ def security_page(state, csrf, message=""):
     label = "关闭验证器" if enabled else "启用验证器"
     return page("登录安全", f"""<section class="login">
     <p><a href="{prefix}/">返回后台</a></p><h1>登录安全</h1>{notice}
-    <p>验证器已{'启用' if enabled else '关闭'}</p>
+    <h2>修改后台密码</h2>
+    <form method="post" action="{prefix}/security/password">
+    <input type="hidden" name="csrf" value="{csrf}">
+    <label>当前密码 <input name="password" type="password" autocomplete="current-password" required maxlength="256"></label>
+    <label>新密码 <input name="new_password" type="password" autocomplete="new-password" required minlength="12" maxlength="256"></label>
+    <label>确认新密码 <input name="confirm_password" type="password" autocomplete="new-password" required minlength="12" maxlength="256"></label>
+    {OTP_INPUT if enabled else ""}<button>修改密码</button></form></section>
+    <section class="login"><h2>验证器</h2><p>验证器已{'启用' if enabled else '关闭'}</p>
     <form method="post" action="{prefix}/security/{action}">
     <input type="hidden" name="csrf" value="{csrf}">
     {guide}{PASSWORD_INPUT}{OTP_INPUT}<button>{label}</button></form></section>""", prefix)
 
 
-def dashboard(state, origin, running, csrf, message=""):
+def dashboard(state, running, csrf, message=""):
     prefix = entry_path(state)
     token = f'<input type="hidden" name="csrf" value="{csrf}">'
     rows = []
     for entry in state["devices"]:
-        url = escape(f'{origin}{prefix}/sub/{entry["token"]}', quote=True)
+        url = escape(subscription_url(state, entry), quote=True)
         rows.append(f"""<li><div><strong>{escape(entry["name"])}</strong>
         <input readonly aria-label="Mihomo 订阅链接" value="{url}"></div>
-        <form method="post" action="{prefix}/devices/remove">{token}
+        <form class="device-actions" method="post" action="{prefix}/devices/remove">{token}
+        <a class="button secondary" href="{prefix}/qr/{entry['id']}" target="_blank" rel="noopener noreferrer">订阅二维码</a>
         <input type="hidden" name="id" value="{entry['id']}"><button class="secondary">撤销</button>
         </form></li>""")
     devices = f'<ul>{"".join(rows)}</ul>' if rows else '<p class="muted">添加设备后，代理会开始监听。</p>'
@@ -128,7 +151,8 @@ def dashboard(state, origin, running, csrf, message=""):
     notice = f'<p class="notice" role="alert">{escape(message)}</p>' if message else ""
     return page("节点管理", f"""<section class="hero"><div><h1>{escape(state["label"])}</h1>
     <p>{escape(state["domain"])}:{state["port"]} · VLESS / REALITY / Vision</p></div>
-    <span class="status">{status}</span></section>
+    <div class="hero-actions"><span class="status">{status}</span>
+    <a class="button secondary" href="{prefix}/security">登录安全</a></div></section>
     {notice}
     <section class="panel"><h2>设备与订阅</h2>{devices}
     <form class="actions" method="post" action="{prefix}/devices/add">{token}
@@ -139,7 +163,7 @@ def dashboard(state, origin, running, csrf, message=""):
     <label>显示名称 <input name="label" required maxlength="60" value="{escape(state['label'], quote=True)}"></label>
     <button>保存</button></form></section>
     <form class="logout" method="post" action="{prefix}/logout">{token}
-    <a href="{prefix}/security">登录安全</a> <button class="secondary">退出登录</button></form>""", prefix)
+    <button class="secondary">退出登录</button></form>""", prefix)
 
 
 class Admin:
@@ -203,6 +227,27 @@ class Admin:
         self.sessions = {token: self.sessions[token]}
         return 200
 
+    def change_password(self, form):
+        new_password = form.get("new_password", "")
+        if not 12 <= len(new_password) <= 256:
+            return 400, "新密码须为 12 至 256 个字符。"
+        if new_password != form.get("confirm_password", ""):
+            return 400, "两次输入的新密码不一致。"
+        status, step = self.verify(form.get("password", ""), form.get("otp", ""), totp_required(self.state))
+        if status == 401:
+            return status, "当前密码或验证器代码有误。"
+        if status == 429:
+            return status, "尝试次数过多，请稍后再试。"
+        salt = secrets.token_bytes(16)
+        auth = {**self.state["auth"], "salt": salt.hex(), "password_hash": password_hash(new_password, salt)}
+        state = {**self.state, "auth": auth}
+        self.core.store.save(state, last_step=step)
+        self.state = state
+        if step is not None:
+            self.last_step = step
+        self.sessions.clear()
+        return 200, "密码已修改，请重新登录。"
+
     def change(self, path, form):
         state = dict(self.state)
         entries = state["devices"]
@@ -241,9 +286,10 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def respond(self, status, body="", content_type="text/html", headers=None):
-        payload = body.encode()
+        binary = isinstance(body, bytes)
+        payload = body if binary else body.encode()
         self.send_response(status)
-        self.send_header("Content-Type", f"{content_type}; charset=utf-8")
+        self.send_header("Content-Type", content_type if binary else f"{content_type}; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
         # Form navigation needs a same-origin Origin header for POST validation.
@@ -282,7 +328,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         app = self.server.app
-        path = urlsplit(self.path).path
+        request = urlsplit(self.path)
+        path = request.path
         prefix = entry_path(app.state)
         if path == prefix:
             return self.redirect(prefix + "/")
@@ -312,16 +359,25 @@ class Handler(BaseHTTPRequestHandler):
                         if hmac.compare_digest(key, entry["token"]):
                             return self.respond(200, subscription(app.state, entry), "application/yaml")
                 return self.respond(404)
+            if path.startswith("/qr/"):
+                _, csrf = self.session(app)
+                key = path.removeprefix("/qr/")
+                if csrf:
+                    for entry in app.state["devices"]:
+                        if entry["id"] == key:
+                            return self.respond(200, subscription_qr(subscription_url(app.state, entry)), "image/png")
+                return self.respond(404)
             if path not in ("/", "/login", "/security"):
                 return self.respond(404)
             _, csrf = self.session(app)
             if csrf:
                 if path == "/security":
                     return self.respond(200, security_page(app.state, csrf))
-                return self.respond(200, dashboard(app.state, app.origin, app.core.running, csrf))
+                return self.respond(200, dashboard(app.state, app.core.running, csrf))
             if path == "/security":
                 return self.redirect(prefix + "/")
-            self.respond(200, login_page(app.state))
+            message = "密码已修改，请重新登录。" if path == "/login" and request.query == "password=changed" else ""
+            self.respond(200, login_page(app.state, message))
 
     def do_POST(self):
         app = self.server.app
@@ -336,7 +392,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(415)
         try:
             size = int(self.headers["Content-Length"])
-            if not 0 < size <= 4096:
+            if not 0 < size <= 12288:
                 return self.respond(413)
             form = {
                 key: values[0] for key, values in parse_qs(
@@ -363,6 +419,14 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/logout":
                 app.sessions.pop(token, None)
                 return self.redirect(prefix + "/", "")
+            if path == "/security/password":
+                try:
+                    status, message = app.change_password(form)
+                except (OSError, RuntimeError):
+                    return self.respond(503, security_page(app.state, csrf, "暂时无法保存，请稍后重试。"))
+                if status == 200:
+                    return self.redirect(prefix + "/login?password=changed", "")
+                return self.respond(status, security_page(app.state, csrf, message))
             if path in ("/security/enable", "/security/disable"):
                 try:
                     status = app.configure_totp(
@@ -379,9 +443,9 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 app.change(path, form)
             except ValueError as error:
-                return self.respond(400, dashboard(app.state, app.origin, app.core.running, csrf, str(error)))
+                return self.respond(400, dashboard(app.state, app.core.running, csrf, str(error)))
             except (OSError, RuntimeError, subprocess.TimeoutExpired):
-                return self.respond(503, dashboard(app.state, app.origin, app.core.running, csrf, "保存失败，已尝试恢复原有代理配置。"))
+                return self.respond(503, dashboard(app.state, app.core.running, csrf, "保存失败，已尝试恢复原有代理配置。"))
             return self.redirect(prefix + "/")
 
 

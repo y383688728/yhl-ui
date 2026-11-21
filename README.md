@@ -11,7 +11,7 @@ yhl-ui 是自用的单节点代理管理程序。它使用官方 sing-box 1.14.4
 | 443/TCP | 1Panel 中已有的 HTTPS 网站，也作为新安装的 REALITY 握手目标 |
 | 19999/TCP | 后台的本机 HTTP 服务，仅监听回环地址 |
 
-订阅是持有链接即可读取的设备凭据，请通过私人渠道导入 Mihomo。撤销设备会关闭旧订阅并重新加载代理配置，现有代理连接会短暂中断。
+订阅是持有链接即可读取的设备凭据，请通过私人渠道导入 Mihomo。可以复制链接，或在后台打开该设备的「订阅二维码」扫码获取链接。撤销设备会关闭旧订阅并重新加载代理配置，现有代理连接会短暂中断。
 
 ## 安装
 
@@ -27,7 +27,7 @@ curl -fsSL https://github.com/y383688728/yhl-ui/releases/latest/download/setup.s
 
 安装器从 1Panel OpenResty 的网站配置识别证书路径，为 9999 创建独立的反向代理配置，引用 443 站点使用的同一套证书文件。1Panel 续期更新网站证书并重载 OpenResty 后，9999 随之使用新证书。默认安装无需 1Panel API Key、DNS 服务商凭据或 Redis。安装通过健康检查后，CLI 显示后台完整地址、账号 `admin` 和随机管理员密码，请妥善保存。在「登录安全」中可以配置验证器。
 
-后台地址包含配置的路径，例如 `https://node.example.com:9999/admin/`。升级后旧订阅链接仍可使用。已有验证器状态会随升级保留。需要切换到密码登录并生成新密码时，可以选择菜单第 2 项，或直接运行下面命令。
+后台地址包含配置的路径，例如 `https://node.example.com:9999/admin/`。后台顶部的「登录安全」可修改管理员密码并管理验证器。修改密码后需重新登录。升级后旧订阅链接仍可使用，已有验证器状态会随升级保留。需要切换到密码登录并生成新密码时，可以选择菜单第 2 项，或直接运行下面命令。
 
 ```sh
 curl -fsSL https://github.com/y383688728/yhl-ui/releases/latest/download/setup.sh | sudo bash -s -- --update --reset-password-only

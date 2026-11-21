@@ -2,7 +2,7 @@
 set -euo pipefail
 umask 022
 
-version=0.1.6
+version=0.1.7
 release="https://github.com/y383688728/yhl-ui/releases/download/v$version"
 install_dir="/opt/yhl-ui/releases/$version"
 

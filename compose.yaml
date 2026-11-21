@@ -1,6 +1,6 @@
 services:
   yhl-ui:
-    image: ${YHL_IMAGE:-yhl-ui:0.1.6}
+    image: ${YHL_IMAGE:-yhl-ui:0.1.7}
     build: .
     network_mode: host
     init: true
