@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
+from routing_rules import DEFAULT_RULES
 from storage import Store
 
 
@@ -36,8 +37,8 @@ def device(name):
     return {"id": str(uuid.uuid4()), "name": name, "token": secrets.token_urlsafe(32)}
 
 
-def config(state):
-    return {
+def config(state, stats_address=None):
+    result = {
         "log": {"level": "warn"},
         "inbounds": [{
             "type": "vless",
@@ -60,6 +61,12 @@ def config(state):
         }],
         "outbounds": [{"type": "direct", "tag": "internet"}],
     }
+    if stats_address:
+        result["experimental"] = {"v2ray_api": {
+            "listen": stats_address,
+            "stats": {"enabled": True, "users": [entry["id"] for entry in state["devices"]]},
+        }}
+    return result
 
 
 def subscription(state, entry):
@@ -83,7 +90,7 @@ def subscription(state, entry):
             "reality-opts": {"public-key": state["public_key"], "short-id": state["short_id"]},
         }],
         "proxy-groups": [{"name": "节点", "type": "select", "proxies": [name]}],
-        "rules": ["MATCH,节点"],
+        "rules": state.get("routing_rules", {}).get("rules", DEFAULT_RULES),
     }, ensure_ascii=False)
 
 
@@ -103,12 +110,19 @@ def vless_uri(state, entry):
 
 
 class Core:
-    def __init__(self, binary, data):
+    def __init__(self, binary, data, traffic_tool=None):
         self.binary = binary
         self.store = Store(data)
         self.path = data / "sing-box.json"
         self.pending = data / "sing-box.pending.json"
         self.process = None
+        self.traffic_tool = traffic_tool
+        self.stats_address = None
+        self.stats_snapshot = {}
+        if traffic_tool:
+            with socket.socket() as listener:
+                listener.bind(("127.0.0.1", 0))
+                self.stats_address = f"127.0.0.1:{listener.getsockname()[1]}"
 
     def command(self, *args):
         result = subprocess.run(
@@ -131,6 +145,7 @@ class Core:
 
     def stop(self):
         if self.running:
+            self.collect_traffic()
             self.process.terminate()
             try:
                 self.process.wait(timeout=5)
@@ -139,9 +154,34 @@ class Core:
                 self.process.wait()
         self.process = None
 
+    def collect_traffic(self):
+        if not self.stats_address or not self.running:
+            return False
+        try:
+            result = subprocess.run(
+                [self.traffic_tool, self.stats_address], capture_output=True, encoding="utf-8",
+                timeout=3, check=True,
+            )
+            counts = json.loads(result.stdout)
+            deltas = {}
+            for key, (upload, download) in counts.items():
+                old_up, old_down = self.stats_snapshot.get(key, (0, 0))
+                delta = (
+                    upload - old_up if upload >= old_up else upload,
+                    download - old_down if download >= old_down else download,
+                )
+                if delta != (0, 0):
+                    deltas[key] = delta
+            self.store.add_traffic(deltas)
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
+            return False
+        self.stats_snapshot = counts
+        return True
+
     def start(self, path, state):
         if not state["devices"]:
             return
+        self.stats_snapshot = {}
         self.process = subprocess.Popen([self.binary, "run", "-c", str(path)])
         address = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(state["bind"], state["bind"])
         deadline = time.monotonic() + 4
@@ -161,7 +201,7 @@ class Core:
 
     def apply(self, state, previous=None):
         try:
-            write_json(self.pending, config(state))
+            write_json(self.pending, config(state, self.stats_address))
             if state["devices"]:
                 self.command("check", "-c", str(self.pending))
             self.stop()
@@ -172,7 +212,7 @@ class Core:
             except (OSError, RuntimeError):
                 self.stop()
                 if previous is not None:
-                    write_json(self.path, config(previous))
+                    write_json(self.path, config(previous, self.stats_address))
                     self.start(self.path, previous)
                 raise
         finally:

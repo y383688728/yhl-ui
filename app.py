@@ -8,6 +8,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import signal
 import struct
 import subprocess
@@ -21,6 +22,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
 from core import DOMAIN, Core, device, subscription, vless_uri
+from routing_rules import MAX_RULE_BYTES, parse_rules
 
 
 COOKIE = "__Host-yhl-session"
@@ -142,6 +144,7 @@ def dashboard(state, running, csrf, message=""):
         <form class="device-actions" method="post" action="{prefix}/devices/remove">{token}
         <a class="button secondary" href="{prefix}/qr/{entry['id']}" target="_blank" rel="noopener noreferrer">Mihomo 订阅码</a>
         <a class="button secondary" href="{prefix}/qr/node/{entry['id']}" target="_blank" rel="noopener noreferrer">小火箭节点码</a>
+        <a class="button secondary" href="{prefix}/traffic/{entry['id']}">流量详情</a>
         <input type="hidden" name="id" value="{entry['id']}"><button class="secondary">撤销</button>
         </form></li>""")
     devices = f'<ul>{"".join(rows)}</ul>' if rows else '<p class="muted">添加设备后，代理会开始监听。</p>'
@@ -153,6 +156,7 @@ def dashboard(state, running, csrf, message=""):
     return page("节点管理", f"""<section class="hero"><div><h1>{escape(state["label"])}</h1>
     <p>{escape(state["domain"])}:{state["port"]} · VLESS / REALITY / Vision</p></div>
     <div class="hero-actions"><span class="status">{status}</span>
+    <a class="button secondary" href="{prefix}/rules">Clash 分流规则</a>
     <a class="button secondary" href="{prefix}/security">登录安全</a></div></section>
     {notice}
     <section class="panel"><h2>设备与订阅</h2>{devices}
@@ -165,6 +169,48 @@ def dashboard(state, running, csrf, message=""):
     <button>保存</button></form></section>
     <form class="logout" method="post" action="{prefix}/logout">{token}
     <button class="secondary">退出登录</button></form>""", prefix)
+
+
+def rules_page(state, csrf, source=None, message=""):
+    prefix = entry_path(state)
+    if source is None:
+        source = state.get("routing_rules", {}).get("source", "")
+    notice = f'<p class="notice" role="status">{escape(message)}</p>' if message else ""
+    example = "rules:\n  - DOMAIN-SUFFIX,example.com,DIRECT\n  - MATCH,节点"
+    return page("Clash 分流规则", f"""<section class="panel">
+    <p><a href="{prefix}/">返回后台</a></p><h1>Clash 分流规则</h1>{notice}
+    <p>保存后，在各设备刷新 Mihomo 订阅即可应用。PROXY 会使用「节点」。清空并保存可恢复默认规则。</p>
+    <form class="rules-editor" method="post" action="{prefix}/rules">
+    <input type="hidden" name="csrf" value="{csrf}">
+    <label>rules YAML <textarea name="rules" spellcheck="false" maxlength="{MAX_RULE_BYTES}" rows="15"
+        placeholder="{escape(example, quote=True)}">{escape(source)}</textarea></label>
+    <button>保存规则</button></form></section>""", prefix)
+
+
+def format_bytes(amount):
+    if amount < 1024:
+        return f"{amount:,} B"
+    quantity = amount
+    for unit in ("KiB", "MiB", "GiB", "TiB", "PiB", "EiB"):
+        quantity /= 1024
+        if quantity < 1024 or unit == "EiB":
+            return f"{quantity:,.2f} {unit}"
+
+
+def traffic_page(state, device_entry, usage, sampled):
+    prefix = entry_path(state)
+    upload, download = usage
+    name = escape(device_entry["name"])
+    notice = "" if sampled else '<p class="notice">当前未取得实时数据，显示最近已保存的统计。</p>'
+    return page("订阅流量", f"""<section class="panel">
+    <p><a href="{prefix}/">返回后台</a></p><h1>{name}的订阅流量</h1>{notice}
+    <dl class="traffic-totals">
+    <div><dt>上传</dt><dd>{format_bytes(upload)}</dd></div>
+    <div><dt>下载</dt><dd>{format_bytes(download)}</dd></div>
+    <div><dt>合计</dt><dd>{format_bytes(upload + download)}</dd></div>
+    </dl>
+    <p class="muted">从流量统计启用后累计。共用此订阅的设备合并计量。</p>
+    </section>""", prefix)
 
 
 class Admin:
@@ -273,6 +319,16 @@ class Admin:
         self.core.apply(state, self.state)
         self.state = state
 
+    def change_rules(self, source):
+        parsed = parse_rules(source)
+        state = dict(self.state)
+        if parsed is None:
+            state.pop("routing_rules", None)
+        else:
+            state["routing_rules"] = parsed
+        self.core.store.save(state)
+        self.state = state
+
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "yhl-ui"
@@ -372,14 +428,30 @@ class Handler(BaseHTTPRequestHandler):
                             payload = vless_uri(app.state, entry) if node else subscription_url(app.state, entry)
                             return self.respond(200, qr_png(payload), "image/png")
                 return self.respond(404)
-            if path not in ("/", "/login", "/security"):
+            if path.startswith("/traffic/"):
+                _, csrf = self.session(app)
+                key = path.removeprefix("/traffic/")
+                if csrf:
+                    for entry in app.state["devices"]:
+                        if entry["id"] == key:
+                            sampled = app.core.collect_traffic()
+                            try:
+                                usage = app.core.store.traffic(key)
+                            except RuntimeError:
+                                return self.respond(503)
+                            return self.respond(200, traffic_page(app.state, entry, usage, sampled))
+                return self.respond(404)
+            if path not in ("/", "/login", "/security", "/rules"):
                 return self.respond(404)
             _, csrf = self.session(app)
             if csrf:
                 if path == "/security":
                     return self.respond(200, security_page(app.state, csrf))
+                if path == "/rules":
+                    message = "规则已保存，刷新订阅后即可应用。" if request.query == "saved=1" else ""
+                    return self.respond(200, rules_page(app.state, csrf, message=message))
                 return self.respond(200, dashboard(app.state, app.core.running, csrf))
-            if path == "/security":
+            if path in ("/security", "/rules"):
                 return self.redirect(prefix + "/")
             message = "密码已修改，请重新登录。" if path == "/login" and request.query == "password=changed" else ""
             self.respond(200, login_page(app.state, message))
@@ -397,7 +469,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(415)
         try:
             size = int(self.headers["Content-Length"])
-            if not 0 < size <= 12288:
+            if not 0 < size <= (MAX_RULE_BYTES * 3 + 1024 if path == "/rules" else 12288):
                 return self.respond(413)
             form = {
                 key: values[0] for key, values in parse_qs(
@@ -424,6 +496,15 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/logout":
                 app.sessions.pop(token, None)
                 return self.redirect(prefix + "/", "")
+            if path == "/rules":
+                source = form.get("rules", "")
+                try:
+                    app.change_rules(source)
+                except ValueError as error:
+                    return self.respond(400, rules_page(app.state, csrf, source, str(error)))
+                except (OSError, RuntimeError):
+                    return self.respond(503, rules_page(app.state, csrf, source, "暂时无法保存规则，请稍后重试。"))
+                return self.redirect(prefix + "/rules?saved=1")
             if path == "/security/password":
                 try:
                     status, message = app.change_password(form)
@@ -566,6 +647,8 @@ def serve(args, core):
                         core.start(core.path, app.state)
                     except (OSError, RuntimeError):
                         print("代理进程重启失败。", flush=True)
+                else:
+                    core.collect_traffic()
 
     def terminate(*_):
         raise KeyboardInterrupt
@@ -615,7 +698,8 @@ def main():
         command.add_argument("--http-port", type=origin_port, default=19999)
     args = parser.parse_args()
     args.data.mkdir(mode=0o700, parents=True, exist_ok=True)
-    core = Core(args.core, args.data)
+    traffic_tool = shutil.which("yhl-traffic") if args.command == "serve" else None
+    core = Core(args.core, args.data, traffic_tool)
     if args.command == "init":
         initialize(args, core)
     elif args.command == "reset-login":

@@ -1,10 +1,11 @@
 services:
   yhl-ui:
-    image: ${YHL_IMAGE:-yhl-ui:0.1.8}
+    image: ${YHL_IMAGE:-yhl-ui:0.1.9}
     build: .
     network_mode: host
     init: true
     restart: unless-stopped
+    stop_grace_period: 15s
     read_only: true
     cap_drop: [ALL]
     security_opt:

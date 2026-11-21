@@ -17,7 +17,7 @@ from openresty import ADMIN_PORT, OpenResty
 from panel import NoRedirect
 
 
-VERSION = "0.1.8"
+VERSION = "0.1.9"
 RELEASES = Path("/opt/yhl-ui/releases")
 
 

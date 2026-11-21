@@ -1,6 +1,6 @@
 # yhl-ui
 
-yhl-ui 是自用的单节点代理管理程序。它使用官方 sing-box 1.14.4，支持 VLESS、TCP、REALITY 和 Vision，并为每台设备生成独立的 Mihomo 订阅。新装时使用账号和密码登录，可在后台按需启用 TOTP 验证器。
+yhl-ui 是自用的单节点代理管理程序。它从 sing-box 1.14.4 的官方源码构建代理和流量统计服务，支持 VLESS、TCP、REALITY 和 Vision，并为每台设备生成独立的 Mihomo 订阅。新装时使用账号和密码登录，可在后台按需启用 TOTP 验证器。
 
 ## 端口
 
@@ -12,6 +12,12 @@ yhl-ui 是自用的单节点代理管理程序。它使用官方 sing-box 1.14.4
 | 19999/TCP | 后台的本机 HTTP 服务，仅监听回环地址 |
 
 订阅是持有链接即可读取的设备凭据，请通过私人渠道导入 Mihomo。可以复制链接，或打开该设备的「Mihomo 订阅码」扫码获取链接。使用 Shadowrocket 扫码导入单个节点时，打开「小火箭节点码」。撤销设备会使该设备的订阅和节点凭据失效，重新加载代理配置会短暂中断现有代理连接。
+
+## 分流规则与流量
+
+在后台打开「Clash 分流规则」，粘贴 `rules:` YAML 段，保存后让各设备刷新 Mihomo 订阅。规则按输入顺序下发，`PROXY` 映射到「节点」。还可以使用 `DIRECT`、`REJECT` 等 Mihomo 内置策略。没有 `MATCH` 时会追加 `MATCH,节点`，清空后保存会恢复默认规则。粘贴区域接受规则列表，引用 `RULE-SET` 或 `SUB-RULE` 的条目需要另备定义。小火箭节点码只携带节点配置，Shadowrocket 的分流规则在客户端管理。
+
+每条订阅的「流量详情」显示自开启统计后的代理上传、下载和合计。共用一个订阅的设备按同一 UUID 累计。采样每 5 秒写入 SQLite，正常关停前会补采样。历史流量没有回填，节点异常退出时可能丢失最近一次采样间隔内的统计。
 
 ## 安装
 
@@ -49,4 +55,4 @@ curl -fsSL https://github.com/y383688728/yhl-ui/releases/latest/download/setup.s
 
 安装器会在新版容器启动或验收失败时尝试恢复原镜像。手动降级到 v0.1.0 或 v0.1.1 时，请使用升级前的卷备份，因为旧镜像只读取 JSON。旧版的 443 网站如果转发到本机占位页，重建旧服务时设置 `YHL_PUBLIC_PORT=19998`。
 
-Docker 构建会校验官方 sing-box 二进制归档的 SHA256。上游发行包、源代码和许可证可在 [sing-box v1.14.4](https://github.com/SagerNet/sing-box/releases/tag/v1.14.4) 查看。安装器的站点和证书接口以 [1Panel v2.5.0](https://github.com/1Panel-dev/1Panel/tree/v2.5.0) 为适配目标。
+Docker 构建会校验 sing-box 源码归档的 SHA256，并启用 V2Ray 用户流量统计。上游发行包、源代码和许可证可在 [sing-box v1.14.4](https://github.com/SagerNet/sing-box/releases/tag/v1.14.4) 查看。安装器的站点和证书接口以 [1Panel v2.5.0](https://github.com/1Panel-dev/1Panel/tree/v2.5.0) 为适配目标。

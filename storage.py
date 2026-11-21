@@ -18,6 +18,11 @@ CREATE TABLE IF NOT EXISTS login_state (
     id INTEGER PRIMARY KEY CHECK(id = 1),
     last_step INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS traffic (
+    device_id TEXT PRIMARY KEY,
+    upload INTEGER NOT NULL,
+    download INTEGER NOT NULL
+);
 """
 
 
@@ -77,6 +82,7 @@ class Store:
                         (index, entry["id"], entry["name"], entry["token"])
                         for index, entry in enumerate(state["devices"])
                     ])
+                    db.execute("DELETE FROM traffic WHERE device_id NOT IN (SELECT id FROM device)")
         except sqlite3.Error as error:
             raise RuntimeError("无法保存 yhl-ui 数据。") from error
 
@@ -86,3 +92,26 @@ class Store:
                 db.execute("UPDATE login_state SET last_step = ? WHERE id = 1", (step,))
         except sqlite3.Error as error:
             raise RuntimeError("无法保存验证器登录状态。") from error
+
+    def add_traffic(self, deltas):
+        if not deltas:
+            return
+        try:
+            with closing(self.connect()) as db, db:
+                db.executemany("""
+                    INSERT INTO traffic (device_id, upload, download)
+                    SELECT id, ?, ? FROM device WHERE id = ?
+                    ON CONFLICT(device_id) DO UPDATE SET
+                        upload = traffic.upload + excluded.upload,
+                        download = traffic.download + excluded.download
+                """, [(upload, download, key) for key, (upload, download) in deltas.items()])
+        except sqlite3.Error as error:
+            raise RuntimeError("无法保存订阅流量。") from error
+
+    def traffic(self, device_id):
+        try:
+            with closing(self.connect(readonly=True)) as db:
+                row = db.execute("SELECT upload, download FROM traffic WHERE device_id = ?", (device_id,)).fetchone()
+        except sqlite3.Error as error:
+            raise RuntimeError("无法读取订阅流量。") from error
+        return row or (0, 0)
