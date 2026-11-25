@@ -2,8 +2,8 @@
 set -euo pipefail
 umask 022
 
-version=0.1.9
-release="https://github.com/y383688728/yhl-ui/releases/download/v$version"
+version=0.1.10
+release="https://github.com/yhlapple15/yhl-ui/releases/download/v$version"
 install_dir="/opt/yhl-ui/releases/$version"
 
 if (( EUID != 0 )); then

@@ -7,6 +7,7 @@
   --line: #dbe1ef;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; }
 main { width: min(880px, calc(100% - 32px)); margin: 0 auto 4rem; }
 header {
@@ -36,12 +37,32 @@ h2 { font-size: 1.2rem; margin-bottom: 1rem; }
 .login h1 { margin-bottom: 1.25rem; }
 .login form { display: grid; gap: 1.2rem; }
 label { display: grid; gap: .35rem; flex: 1; min-width: min(12rem, 100%); }
-input, button, .button { font: inherit; border-radius: 8px; min-height: 42px; }
-input { width: 100%; border: 1px solid #bfc9e1; padding: .45rem .7rem; color: inherit; background: white; }
+input, select, button, .button { font: inherit; border-radius: 8px; min-height: 42px; }
+input, select { width: 100%; border: 1px solid #bfc9e1; padding: .45rem .7rem; color: inherit; background: white; }
 input[readonly] { background: #f5f7fd; }
 textarea { width: 100%; padding: .7rem; border: 1px solid #bfc9e1; border-radius: 8px; font: 1rem/1.5 monospace; resize: vertical; }
+.subscription-url { display: flex; gap: .5rem; }
+.subscription-url input { min-width: 0; }
+.subscription-url button { flex: none; white-space: nowrap; }
+.copy-status:not(:empty) { margin-top: .35rem; font-size: .875rem; }
+.copy-status:empty { margin: 0; }
 .rules-editor { display: grid; gap: .9rem; margin-top: 1rem; }
-.rules-editor button { justify-self: start; }
+.rules-editor > button { justify-self: start; }
+.rule-fields, .rule-controls { display: flex; flex-wrap: wrap; align-items: end; gap: .7rem; }
+.rule-fields { background: #f5f7fd; border: 1px solid var(--line); padding: .9rem; border-radius: 10px; }
+.rule-fields label, .rule-controls label { min-width: min(10rem, 100%); }
+#rule-value-field { flex: 1.35; }
+.rule-controls { margin-top: .7rem; }
+.rule-controls label { flex: 0 1 13rem; }
+#rule-feedback:not(:empty) { margin-top: .55rem; }
+.rule-list { margin: .65rem 0 0; padding: 0; list-style: none; }
+.rule-list li { align-items: center; }
+.rule-row span { overflow-wrap: anywhere; }
+.rule-row .rule-row-actions { display: flex; flex: none; flex-wrap: wrap; gap: .4rem; }
+.rule-row-actions button { min-height: 36px; padding: .35rem .65rem; }
+.rule-row-actions button:disabled { opacity: .45; cursor: default; }
+#rule-yaml summary { cursor: pointer; color: var(--accent); }
+#rule-yaml p { margin-block: .35rem; }
 .traffic-totals { display: flex; flex-wrap: wrap; gap: 1rem; }
 .traffic-totals > div { background: #f5f7fd; border-radius: 10px; padding: .75rem 1rem; min-width: 10rem; }
 .traffic-totals dd { margin: .2rem 0 0; font-size: 1.25rem; font-weight: 650; }

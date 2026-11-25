@@ -19,7 +19,7 @@ COPY requirements.txt ./
 RUN python -m pip install --no-cache-dir --no-deps --require-hashes --only-binary=:all: -r requirements.txt
 COPY --from=core-build /out/sing-box /out/yhl-traffic /usr/local/bin/
 COPY --from=core-build /src/LICENSE /usr/share/doc/sing-box/LICENSE
-COPY app.py core.py routing_rules.py storage.py style.css ./
+COPY app.py core.py routing_rules.py storage.py style.css admin.js ./
 COPY public/ ./public/
 USER 10001:10001
 ENTRYPOINT ["python", "app.py"]

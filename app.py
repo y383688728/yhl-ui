@@ -22,7 +22,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
 from core import DOMAIN, Core, device, subscription, vless_uri
-from routing_rules import MAX_RULE_BYTES, parse_rules
+from routing_rules import COMMA_PAYLOAD_TYPES, DEFAULT_RULES, MAX_RULE_BYTES, RULE_TYPES, parse_rules, read_rules
 
 
 COOKIE = "__Host-yhl-session"
@@ -30,6 +30,7 @@ ACCOUNT = "admin"
 DEFAULT_ADMIN_PATH = "/admin"
 SESSION_TTL = 8 * 3600
 STYLE = Path(__file__).with_name("style.css")
+SCRIPT = Path(__file__).with_name("admin.js")
 PUBLIC = Path(__file__).with_name("public") / "index.html"
 
 
@@ -85,11 +86,12 @@ PASSWORD_INPUT = (
 )
 
 
-def page(title, body, prefix):
+def page(title, body, prefix, interactive=False):
+    script = f'<script defer src="{prefix}/admin.js"></script>' if interactive else ""
     return f"""<!doctype html><html lang="zh-CN"><head>
     <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
     <title>{escape(title)} · yhl-ui</title><link rel="stylesheet" href="{prefix}/style.css">
-    </head><body><main><header><span class="brand">yhl-ui</span><span>单节点代理管理</span></header>
+    {script}</head><body><main><header><span class="brand">yhl-ui</span><span>单节点代理管理</span></header>
     {body}</main></body></html>"""
 
 
@@ -140,7 +142,9 @@ def dashboard(state, running, csrf, message=""):
     for entry in state["devices"]:
         url = escape(subscription_url(state, entry), quote=True)
         rows.append(f"""<li><div><strong>{escape(entry["name"])}</strong>
-        <input readonly aria-label="Mihomo 订阅链接" value="{url}"></div>
+        <div class="subscription-url"><input readonly aria-label="Mihomo 订阅链接" value="{url}">
+        <button type="button" class="secondary" data-copy-url hidden>复制 URL</button></div>
+        <p class="muted copy-status" role="status"></p></div>
         <form class="device-actions" method="post" action="{prefix}/devices/remove">{token}
         <a class="button secondary" href="{prefix}/qr/{entry['id']}" target="_blank" rel="noopener noreferrer">Mihomo 订阅码</a>
         <a class="button secondary" href="{prefix}/qr/node/{entry['id']}" target="_blank" rel="noopener noreferrer">小火箭节点码</a>
@@ -168,23 +172,69 @@ def dashboard(state, running, csrf, message=""):
     <label>显示名称 <input name="label" required maxlength="60" value="{escape(state['label'], quote=True)}"></label>
     <button>保存</button></form></section>
     <form class="logout" method="post" action="{prefix}/logout">{token}
-    <button class="secondary">退出登录</button></form>""", prefix)
+    <button class="secondary">退出登录</button></form>""", prefix, interactive=True)
 
 
-def rules_page(state, csrf, source=None, message=""):
+def rules_page(state, csrf, source=None, message="", visual_draft=False):
     prefix = entry_path(state)
+    current = state.get("routing_rules", {})
+    saved_source = current.get("source", "")
     if source is None:
-        source = state.get("routing_rules", {}).get("source", "")
+        source = saved_source
+    common = {
+        "DOMAIN": "完整域名", "DOMAIN-SUFFIX": "域名后缀", "DOMAIN-KEYWORD": "域名关键词",
+        "IP-CIDR": "IPv4 网段", "IP-CIDR6": "IPv6 网段", "GEOSITE": "域名分类",
+        "GEOIP": "IP 地区", "MATCH": "其余流量",
+    }
+    options = "".join(f'<option value="{kind}">{label} · {kind}</option>' for kind, label in common.items())
+    advanced_options = "".join(f"<option>{kind}</option>" for kind in sorted(RULE_TYPES - common.keys()))
+    policy_names = {"节点": "代理 · 节点", "DIRECT": "直连 · DIRECT", "REJECT": "拒绝 · REJECT"}
+    policies = "".join(
+        f'<option value="{policy}">{policy_names.get(policy, policy)}</option>'
+        for policy in ("节点", "DIRECT", "REJECT", "REJECT-DROP", "PASS", "PASS-RULE", "COMPATIBLE")
+    )
+    rules = current.get("rules", DEFAULT_RULES)
+    yaml_pending = source != saved_source
+    if visual_draft:
+        try:
+            rules = read_rules(source)
+            yaml_pending = False
+        except ValueError:
+            pass
+    editor_data = escape(json.dumps({
+        "rules": rules,
+        "commaPayload": sorted(COMMA_PAYLOAD_TYPES),
+        "yamlPending": yaml_pending,
+    }, ensure_ascii=False))
     notice = f'<p class="notice" role="status">{escape(message)}</p>' if message else ""
     example = "rules:\n  - DOMAIN-SUFFIX,example.com,DIRECT\n  - MATCH,节点"
     return page("Clash 分流规则", f"""<section class="panel">
     <p><a href="{prefix}/">返回后台</a></p><h1>Clash 分流规则</h1>{notice}
-    <p>保存后，在各设备刷新 Mihomo 订阅即可应用。PROXY 会使用「节点」。清空并保存可恢复默认规则。</p>
+    <p class="muted">规则从上到下匹配。保存后刷新 Clash/Mihomo 订阅即可应用。</p>
     <form class="rules-editor" method="post" action="{prefix}/rules">
     <input type="hidden" name="csrf" value="{csrf}">
-    <label>rules YAML <textarea name="rules" spellcheck="false" maxlength="{MAX_RULE_BYTES}" rows="15"
-        placeholder="{escape(example, quote=True)}">{escape(source)}</textarea></label>
-    <button>保存规则</button></form></section>""", prefix)
+    <input type="hidden" id="rule-edit-mode" name="mode" value="{'visual' if visual_draft else 'yaml'}">
+    <section id="visual-rules" hidden aria-label="可视化规则编辑器">
+    <div id="rule-editor-data" hidden>{editor_data}</div>
+    <div class="rule-fields">
+    <label>规则类型 <select id="rule-type">{options}<optgroup label="高级类型">{advanced_options}</optgroup></select></label>
+    <label id="rule-value-field">匹配值 <input id="rule-value" autocomplete="off" spellcheck="false"></label>
+    <label>策略 <select id="rule-policy">{policies}</select></label>
+    </div>
+    <div class="rule-controls">
+    <button type="button" id="apply-rule">添加规则</button>
+    <button type="button" class="secondary" id="cancel-rule" hidden>取消编辑</button>
+    <label id="rule-options-field">附加参数 <input id="rule-options" placeholder="可选，如 no-resolve" spellcheck="false"></label>
+    </div>
+    <p id="rule-feedback" class="muted" role="status"></p>
+    <ol id="rule-list" class="rule-list" aria-label="规则顺序"></ol>
+    </section>
+    <p id="yaml-pending" class="notice" role="status" hidden>YAML 有改动，保存后可继续使用可视化编辑。</p>
+    <details id="rule-yaml" open><summary>高级编辑 · rules YAML</summary>
+    <p class="muted">可直接粘贴。清空后保存可恢复默认规则。表单编辑会重新生成 YAML。</p>
+    <textarea name="rules" aria-label="rules YAML" spellcheck="false" maxlength="{MAX_RULE_BYTES}" rows="12"
+        placeholder="{escape(example, quote=True)}">{escape(source)}</textarea></details>
+    <button>保存规则</button></form></section>""", prefix, interactive=True)
 
 
 def format_bytes(amount):
@@ -352,7 +402,7 @@ class Handler(BaseHTTPRequestHandler):
         # Form navigation needs a same-origin Origin header for POST validation.
         self.send_header("Referrer-Policy", "same-origin" if content_type == "text/html" else "no-referrer")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'self'; script-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
         for key, value in (headers or {}).items():
             self.send_header(key, value)
         self.end_headers()
@@ -402,6 +452,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(404)
         if path == "/style.css":
             return self.respond(200, STYLE.read_text(encoding="utf-8"), "text/css")
+        if path == "/admin.js":
+            return self.respond(200, SCRIPT.read_text(encoding="utf-8"), "text/javascript")
         with app.lock:
             if path == "/healthz":
                 ready = app.core.running or not app.state["devices"]
@@ -498,12 +550,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self.redirect(prefix + "/", "")
             if path == "/rules":
                 source = form.get("rules", "")
+                visual_draft = form.get("mode") == "visual"
                 try:
                     app.change_rules(source)
                 except ValueError as error:
-                    return self.respond(400, rules_page(app.state, csrf, source, str(error)))
+                    return self.respond(400, rules_page(app.state, csrf, source, str(error), visual_draft))
                 except (OSError, RuntimeError):
-                    return self.respond(503, rules_page(app.state, csrf, source, "暂时无法保存规则，请稍后重试。"))
+                    return self.respond(503, rules_page(app.state, csrf, source, "暂时无法保存规则，请稍后重试。", visual_draft))
                 return self.redirect(prefix + "/rules?saved=1")
             if path == "/security/password":
                 try:

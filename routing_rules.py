@@ -56,7 +56,7 @@ def normalize_rule(value):
     return ",".join(fields)
 
 
-def parse_rules(source):
+def read_rules(source):
     from ruamel.yaml import YAML
     from ruamel.yaml.error import YAMLError
     from ruamel.yaml.events import AliasEvent, MappingEndEvent, MappingStartEvent, SequenceEndEvent, SequenceStartEvent
@@ -64,7 +64,7 @@ def parse_rules(source):
     if len(source.encode("utf-8")) > MAX_RULE_BYTES:
         raise ValueError("规则文本超过 64 KiB。")
     if not source.strip():
-        return None
+        return []
     yaml = YAML(typ="safe", pure=True)
     try:
         depth = 0
@@ -86,12 +86,18 @@ def parse_rules(source):
         data = data["rules"]
     if not isinstance(data, list):
         raise ValueError("请粘贴 rules: 及其规则列表，或直接粘贴 YAML 规则列表。")
-    if not data:
-        return None
-    normalized = []
     for position, value in enumerate(data, 1):
         if not isinstance(value, str) or not value.strip() or any(ord(char) < 32 for char in value):
             raise ValueError(f"第 {position} 条规则须为单行文本。")
+    return data
+
+
+def parse_rules(source):
+    values = read_rules(source)
+    if not values:
+        return None
+    normalized = []
+    for position, value in enumerate(values, 1):
         try:
             normalized.append(normalize_rule(value))
         except ValueError as error:
