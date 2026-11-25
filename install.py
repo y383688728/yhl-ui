@@ -8,6 +8,7 @@ import socket
 import ssl
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -17,10 +18,55 @@ from panel import Panel, confirm_dns, get_http
 
 ROOT = Path(__file__).resolve().parent
 COMPOSE = ["docker", "compose", "--project-name", "yhl-ui"]
+SERVICE_NAMES = {"yhl-ui-yhl-ui-1", "yhl-ui_yhl-ui_1"}
+
+
+@dataclass(frozen=True)
+class ServiceContainer:
+    id: str
+    name: str
+    state: str
+    slot: str
 
 
 def command(*args, capture=False, check=True, **kwargs):
     return subprocess.run(args, cwd=ROOT, check=check, text=True, capture_output=capture, **kwargs)
+
+
+def service_containers():
+    rows = command(
+        "docker", "ps", "-a", "--no-trunc", "--filter", f"label=com.docker.compose.project={COMPOSE[3]}",
+        "--filter", "label=com.docker.compose.service=yhl-ui",
+        "--format", '[{{json .ID}},{{json .Names}},{{json .State}},'
+        '{{json (.Label "com.docker.compose.container-number")}},{{json (.Label "com.docker.compose.oneoff")}}]',
+        capture=True,
+    ).stdout.splitlines()
+    containers = []
+    for row in rows:
+        container_id, name, state, slot, oneoff = json.loads(row)
+        if oneoff.lower() != "true":
+            containers.append(ServiceContainer(container_id, name, state, slot))
+    if len(containers) < 2:
+        return (containers[0] if containers else None), None
+    if len(containers) == 2:
+        originals = [
+            entry for entry in containers
+            if entry.name in SERVICE_NAMES and entry.slot == "1" and entry.state in {"running", "exited"}
+        ]
+        if len(originals) == 1:
+            original = originals[0]
+            staged = next(entry for entry in containers if entry != original)
+            # Compose creates this replacement before removing the original service container.
+            if staged.state == "created" and staged.slot == original.slot and staged.name == f"{original.id[:12]}_{original.name}":
+                return original, staged
+    raise RuntimeError("有多个 yhl-ui 服务容器，无法确认安全的恢复方案。请先检查 Docker Compose 项目。")
+
+
+def recover_interrupted_service(original, staged):
+    if original.state != "running":
+        command("docker", "start", original.id)
+    command("docker", "rm", staged.id)
+    print("已恢复上次中断的容器替换，继续使用原有数据。", flush=True)
 
 
 def port_available(host, port):
@@ -167,6 +213,14 @@ def deploy_service(image_archive, running, init_options, expected, *, public_por
             on_ready(prefix)
     except (KeyboardInterrupt, OSError, RuntimeError, subprocess.SubprocessError):
         if previous:
+            original, staged = service_containers()
+            if original and original.id == running:
+                if staged:
+                    recover_interrupted_service(original, staged)
+                elif original.state != "running":
+                    command("docker", "start", original.id)
+                verify_site("http://127.0.0.1:19999/healthz", "ready\n")
+                raise
             command("docker", "tag", previous, "yhl-ui:rollback")
             env["YHL_PUBLIC_PORT"] = old_port
             command(

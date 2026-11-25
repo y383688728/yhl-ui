@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.request import urlopen
 
 
-VERSION = "0.1.11"
+VERSION = "0.1.12"
 HOST_DIR = Path("/opt/yhl-ui/update-control")
 CLIENT_SOCKET = Path("/update-control/control.sock")
 UNIT_DIR = Path("/etc/systemd/system")

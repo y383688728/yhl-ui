@@ -12,7 +12,10 @@ from dataclasses import dataclass
 from urllib.request import ProxyHandler, build_opener
 
 from app import ACCOUNT, DEFAULT_ADMIN_PATH, admin_path, hostname
-from install import COMPOSE, command, credentials_from, deploy_service, port_available, verify_handshake, verify_site
+from install import (
+    COMPOSE, ServiceContainer, command, credentials_from, deploy_service, port_available,
+    recover_interrupted_service, service_containers, verify_handshake, verify_site,
+)
 from openresty import ADMIN_PORT, OpenResty
 from panel import NoRedirect
 import web_update
@@ -31,25 +34,20 @@ class Installed:
     healthy: bool
     domain: str
     path: str
+    container: ServiceContainer
+    staged: ServiceContainer | None
 
 
 def installed_service():
-    result = command(
-        "docker", "ps", "-a", "--filter", f"label=com.docker.compose.project={COMPOSE[3]}",
-        "--filter", "label=com.docker.compose.service=yhl-ui",
-        "--format", '{{.ID}} {{.Label "com.docker.compose.oneoff"}}', capture=True,
-    ).stdout.splitlines()
-    ids = [line.split()[0] for line in result if not line.strip().lower().endswith(" true")]
-    if not ids:
+    container, staged = service_containers()
+    if not container:
         return None
-    if len(ids) != 1:
-        raise RuntimeError("有多个 yhl-ui 服务容器，请先检查 Docker Compose 项目。")
     fields = command(
         "docker", "inspect", "--format",
         '{{.Config.Image}}\t{{.Image}}\t{{.State.Running}}\t'
         '{{if .State.Health}}{{.State.Health.Status}}{{end}}\t'
         '{{index .Config.Labels "io.yhl-ui.domain"}}\t{{index .Config.Labels "io.yhl-ui.admin-path"}}',
-        ids[0], capture=True,
+        container.id, capture=True,
     ).stdout.rstrip("\r\n").split("\t")
     image, image_id, running, health, domain, path = fields
     if not domain:
@@ -61,11 +59,11 @@ def installed_service():
         )
         domain = command(
             "docker", "run", "--rm", "--network", "none", "--read-only",
-            "--volumes-from", ids[0] + ":ro", "--entrypoint", "python", image_id, "-c", read_domain,
+            "--volumes-from", container.id + ":ro", "--entrypoint", "python", image_id, "-c", read_domain,
             capture=True, stdin=subprocess.DEVNULL,
         ).stdout.strip()
-    return Installed(ids[0], image, image_id, running == "true", health == "healthy",
-                     hostname(domain), admin_path(path or DEFAULT_ADMIN_PATH))
+    return Installed(container.id, image, image_id, running == "true", health == "healthy",
+                     hostname(domain), admin_path(path or DEFAULT_ADMIN_PATH), container, staged)
 
 
 def reset_password(domain, path):
@@ -194,6 +192,9 @@ def install(args):
         raise RuntimeError("未检测到已安装的 yhl-ui，请先执行安装。")
     if installed and args.admin_path and args.admin_path != installed.path:
         raise RuntimeError(f"更新会沿用已配置的后台路径 {installed.path}。")
+    if installed and installed.staged and not args.check:
+        recover_interrupted_service(installed.container, installed.staged)
+        installed = installed_service()
     domain = installed.domain if installed else args.domain or hostname(input("已在 1Panel 配好 HTTPS 的域名: ").strip())
     configured_path = args.admin_path
     if not installed and not args.check and configured_path is None:
