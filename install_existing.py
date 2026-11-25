@@ -15,9 +15,10 @@ from app import ACCOUNT, DEFAULT_ADMIN_PATH, admin_path, hostname
 from install import COMPOSE, command, credentials_from, deploy_service, port_available, verify_handshake, verify_site
 from openresty import ADMIN_PORT, OpenResty
 from panel import NoRedirect
+import web_update
 
 
-VERSION = "0.1.10"
+VERSION = web_update.VERSION
 RELEASES = Path("/opt/yhl-ui/releases")
 
 
@@ -105,6 +106,14 @@ def show_result(domain, path, credentials, title):
     print(f"443 网站  https://{domain}/")
 
 
+def enable_web_updates():
+    try:
+        if not web_update.enable():
+            print("未检测到 systemd，可继续使用 CLI 更新。")
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        print(f"未能启用网页更新，可继续使用 CLI 更新：{error}", file=sys.stderr)
+
+
 def health_instance(url):
     with build_opener(ProxyHandler({}), NoRedirect()).open(url, timeout=3) as response:
         instance = response.headers.get("X-YHL-Instance", "")
@@ -160,6 +169,7 @@ def uninstall(domain):
             raise RuntimeError(f"无法确认 {volume} 属于 yhl-ui，已中断卸载。")
     OpenResty(domain, removing=True).remove_managed()
     command(*COMPOSE, "down", "--remove-orphans")
+    web_update.disable()
     if volume in names:
         command("docker", "volume", "rm", volume)
     images = command(
@@ -194,6 +204,7 @@ def install(args):
         print(f"已安装镜像 {installed.image}，发布版本 v{VERSION}。", flush=True)
     if installed and installed.running and installed.healthy and installed.image == f"yhl-ui:{VERSION}" and not args.check:
         credentials = reset_password(domain, installed.path) if args.reset_password_only else None
+        enable_web_updates()
         show_result(domain, installed.path, credentials, "已重置登录" if credentials else "已是最新版本")
         return
     frontend = OpenResty(domain)
@@ -227,6 +238,7 @@ def install(args):
     )
     if args.reset_password_only and credentials is None:
         credentials = reset_password(domain, prefix)
+    enable_web_updates()
     show_result(domain, prefix, credentials, "更新完成" if installed else "安装完成")
 
 

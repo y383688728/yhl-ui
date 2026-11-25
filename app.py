@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 
 from core import DOMAIN, Core, device, subscription, vless_uri
 from routing_rules import COMMA_PAYLOAD_TYPES, DEFAULT_RULES, MAX_RULE_BYTES, RULE_TYPES, parse_rules, read_rules
+import web_update
 
 
 COOKIE = "__Host-yhl-session"
@@ -161,6 +162,7 @@ def dashboard(state, running, csrf, message=""):
     <p>{escape(state["domain"])}:{state["port"]} · VLESS / REALITY / Vision</p></div>
     <div class="hero-actions"><span class="status">{status}</span>
     <a class="button secondary" href="{prefix}/rules">Clash 分流规则</a>
+    <a class="button secondary" href="{prefix}/update">版本更新</a>
     <a class="button secondary" href="{prefix}/security">登录安全</a></div></section>
     {notice}
     <section class="panel"><h2>设备与订阅</h2>{devices}
@@ -235,6 +237,41 @@ def rules_page(state, csrf, source=None, message="", visual_draft=False):
     <textarea name="rules" aria-label="rules YAML" spellcheck="false" maxlength="{MAX_RULE_BYTES}" rows="12"
         placeholder="{escape(example, quote=True)}">{escape(source)}</textarea></details>
     <button>保存规则</button></form></section>""", prefix, interactive=True)
+
+
+def update_page(state, csrf, status):
+    prefix = entry_path(state)
+    phase = status.get("phase")
+    version = status.get("version")
+    messages = {
+        "idle": "点击检查更新，查看 GitHub 是否有新版本。",
+        "busy": "更新服务正在处理请求。刷新状态可查看结果。",
+        "checking": "正在检查版本。",
+        "updating": "更新已开始。后台和代理可能短暂中断，恢复后如果提示登录，请重新登录。",
+        "current": "当前已是最新版本。",
+        "check_error": "检查更新失败，请稍后重试。",
+        "update_error": "更新未完成。可重新检查，或到服务器终端查看升级结果。",
+        "unavailable": "网页更新暂不可用。可在服务器终端运行安装命令更新。",
+    }
+    available = phase == "available" and web_update.valid_version(version) and web_update.newer(version, web_update.VERSION)
+    message = messages.get(phase, "可以检查是否有更新。")
+    if available:
+        message = f"发现新版本 v{version}。更新时后台和代理可能短暂中断。"
+    elif phase == "installed" and web_update.valid_version(version):
+        message = f"已完成 v{version} 的更新。"
+    actions = ''
+    pending = phase in {"busy", "checking", "updating"}
+    if pending:
+        actions = f'<a class="button secondary" href="{prefix}/update">刷新状态</a>'
+    elif phase != "unavailable":
+        install_button = f'<button name="action" value="install {version}">安装更新</button>' if available else ''
+        actions = f'''<form class="actions" method="post" action="{prefix}/update">
+        <input type="hidden" name="csrf" value="{csrf}">
+        {install_button}<button class="secondary" name="action" value="check">检查更新</button></form>'''
+    return page("版本更新", f'''<section class="panel" {'data-update-poll' if pending else ''}>
+    <p><a href="{prefix}/">返回后台</a></p><h1>版本更新</h1>
+    <p>当前版本 v{web_update.VERSION}</p><p class="muted" role="status">{escape(message)}</p>
+    {actions}</section>''', prefix, interactive=pending)
 
 
 def format_bytes(amount):
@@ -402,7 +439,7 @@ class Handler(BaseHTTPRequestHandler):
         # Form navigation needs a same-origin Origin header for POST validation.
         self.send_header("Referrer-Policy", "same-origin" if content_type == "text/html" else "no-referrer")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'self'; script-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
         for key, value in (headers or {}).items():
             self.send_header(key, value)
         self.end_headers()
@@ -493,7 +530,7 @@ class Handler(BaseHTTPRequestHandler):
                                 return self.respond(503)
                             return self.respond(200, traffic_page(app.state, entry, usage, sampled))
                 return self.respond(404)
-            if path not in ("/", "/login", "/security", "/rules"):
+            if path not in ("/", "/login", "/security", "/rules", "/update"):
                 return self.respond(404)
             _, csrf = self.session(app)
             if csrf:
@@ -502,8 +539,10 @@ class Handler(BaseHTTPRequestHandler):
                 if path == "/rules":
                     message = "规则已保存，刷新订阅后即可应用。" if request.query == "saved=1" else ""
                     return self.respond(200, rules_page(app.state, csrf, message=message))
+                if path == "/update":
+                    return self.respond(200, update_page(app.state, csrf, web_update.request("status")))
                 return self.respond(200, dashboard(app.state, app.core.running, csrf))
-            if path in ("/security", "/rules"):
+            if path in ("/security", "/rules", "/update"):
                 return self.redirect(prefix + "/")
             message = "密码已修改，请重新登录。" if path == "/login" and request.query == "password=changed" else ""
             self.respond(200, login_page(app.state, message))
@@ -548,6 +587,11 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/logout":
                 app.sessions.pop(token, None)
                 return self.redirect(prefix + "/", "")
+            if path == "/update":
+                action = form.get("action", "")
+                if action != "check" and not (action.startswith("install ") and web_update.valid_version(action[8:])):
+                    return self.respond(400)
+                return self.respond(200, update_page(app.state, csrf, web_update.request(action)))
             if path == "/rules":
                 source = form.get("rules", "")
                 visual_draft = form.get("mode") == "visual"

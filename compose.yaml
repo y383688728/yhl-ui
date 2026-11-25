@@ -1,6 +1,6 @@
 services:
   yhl-ui:
-    image: ${YHL_IMAGE:-yhl-ui:0.1.10}
+    image: ${YHL_IMAGE:-yhl-ui:0.1.11}
     build: .
     network_mode: host
     init: true
@@ -16,6 +16,7 @@ services:
       io.yhl-ui.admin-path: ${YHL_ADMIN_PATH:-}
     volumes:
       - yhl-data:/data
+      - /opt/yhl-ui/update-control:/update-control:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import sys, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + sys.argv[1] + '/healthz', timeout=3)", "${YHL_HTTP_PORT:-19999}"]
       interval: 10s

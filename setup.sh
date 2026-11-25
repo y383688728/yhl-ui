@@ -2,7 +2,7 @@
 set -euo pipefail
 umask 022
 
-version=0.1.10
+version=0.1.11
 release="https://github.com/yhlapple15/yhl-ui/releases/download/v$version"
 install_dir="/opt/yhl-ui/releases/$version"
 
@@ -10,7 +10,11 @@ if (( EUID != 0 )); then
     printf '请通过 sudo bash 或以 root 用户运行。\n' >&2
     exit 1
 fi
-if ! { true </dev/tty; } 2>/dev/null; then
+if [[ $# -eq 1 && $1 == --update ]]; then
+    input=/dev/null
+elif { true </dev/tty; } 2>/dev/null; then
+    input=/dev/tty
+else
     printf '请在有交互终端的服务器会话中运行。\n' >&2
     exit 1
 fi
@@ -83,4 +87,4 @@ cd -- "$install_dir"
 if [[ -n "$image_archive" ]]; then
     set -- "$@" --image-archive "$install_dir/$image_archive"
 fi
-PYTHONUTF8=1 python3 install_existing.py "$@" </dev/tty
+PYTHONUTF8=1 python3 install_existing.py "$@" <"$input"

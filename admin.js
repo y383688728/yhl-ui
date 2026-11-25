@@ -18,6 +18,22 @@ for (const button of document.querySelectorAll('[data-copy-url]')) {
 const visualEditor = document.querySelector('#visual-rules');
 if (visualEditor) initRulesEditor(visualEditor);
 
+if (document.querySelector('[data-update-poll]')) {
+  const refresh = async () => {
+    try {
+      const page = await fetch(location.pathname, { redirect: 'manual', signal: AbortSignal.timeout(5000) });
+      if (page.type === 'opaqueredirect' || (page.ok && !(await page.text()).includes('data-update-poll'))) {
+        location.replace(location.pathname);
+        return;
+      }
+    } catch {
+      // The admin server may be restarting during an upgrade.
+    }
+    setTimeout(refresh, 3500);
+  };
+  setTimeout(refresh, 1500);
+}
+
 function initRulesEditor(editor) {
   const yamlPanel = document.querySelector('#rule-yaml');
   const yaml = yamlPanel.querySelector('textarea');
